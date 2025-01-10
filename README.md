@@ -1,4 +1,4 @@
-# TinyGrad Experiments
+# tinygrad experiments
 
 A collection of small experiments to learn and explore [tinygrad](https://docs.tinygrad.org), a simple deep learning framework.
 
@@ -15,7 +15,8 @@ An implementation of the Canny edge detection algorithm using tinygrad tensors a
 
 1. Install dependencies:
 ```bash
-pip install -r requirements.txt
+uv venv
+uv pip install -r requirements.txt
 ```
 
 2. Run the edge detection:
