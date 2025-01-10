@@ -3,6 +3,8 @@ from tinygrad.tensor import Tensor
 from tinygrad.nn import Conv2d
 import numpy as np
 from typing import Tuple, Optional
+from PIL import Image
+import matplotlib.pyplot as plt  # For visualization
 
 class EdgeDetector:
     def __init__(self, default_blur_sigma: float = 1.0, default_kernel_size: int = 5):
@@ -185,12 +187,61 @@ class EdgeDetector:
         
         return high_mask + (weak_edges * neighbor_strong)
 
+def load_image(path):
+    """Load an image and convert it to grayscale numpy array."""
+    img = Image.open(path).convert('L')  # Convert to grayscale
+    return np.array(img, dtype=np.float32) / 255.0  # Normalize to [0,1]
+
+def save_image(array, path):
+    """Save a numpy array as an image."""
+    # Ensure the array is in the correct range [0, 255]
+    array = (array * 255).clip(0, 255).astype(np.uint8)
+    img = Image.fromarray(array)
+    img.save(path)
+
+def visualize_results(original, canny, sobel):
+    """Visualize the original image and detection results."""
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
+    
+    ax1.imshow(original, cmap='gray')
+    ax1.set_title('Original Image')
+    ax1.axis('off')
+    
+    ax2.imshow(canny, cmap='gray')
+    ax2.set_title('Canny Edges')
+    ax2.axis('off')
+    
+    ax3.imshow(sobel, cmap='gray')
+    ax3.set_title('Sobel Edges')
+    ax3.axis('off')
+    
+    plt.tight_layout()
+    plt.show()
+
 if __name__ == "__main__":
-    print("Creating test image...")
-    # Create a test image with a clear edge pattern
-    test_image = np.zeros((100, 100), dtype=np.float32)
-    test_image[40:60, :] = 1.0  # Create a horizontal band
-    image = Tensor(test_image)
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Edge detection using TinyGrad')
+    parser.add_argument('--input', '-i', type=str, help='Input image path')
+    parser.add_argument('--output-dir', '-o', type=str, default='output', 
+                       help='Output directory for results')
+    parser.add_argument('--use-test-image', '-t', action='store_true',
+                       help='Use built-in test image instead of loading from file')
+    args = parser.parse_args()
+    
+    if args.use_test_image:
+        print("Creating test image...")
+        test_image = np.zeros((100, 100), dtype=np.float32)
+        test_image[40:60, :] = 1.0  # Create a horizontal band
+        image_array = test_image
+    else:
+        if not args.input:
+            raise ValueError("Please provide an input image path or use --use-test-image")
+        print(f"Loading image from {args.input}...")
+        image_array = load_image(args.input)
+    
+    # Convert to Tensor
+    image = Tensor(image_array)
     
     print("Initializing edge detector...")
     detector = EdgeDetector()
@@ -211,3 +262,13 @@ if __name__ == "__main__":
     print("\nResults summary:")
     print(f"Canny edges - min: {canny_result.min():.4f}, max: {canny_result.max():.4f}")
     print(f"Sobel edges - min: {sobel_result.min():.4f}, max: {sobel_result.max():.4f}")
+    
+    # Save results
+    import os
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    save_image(canny_result, os.path.join(args.output_dir, 'canny_edges.png'))
+    save_image(sobel_result, os.path.join(args.output_dir, 'sobel_edges.png'))
+    
+    # Visualize results
+    visualize_results(image_array, canny_result, sobel_result)
