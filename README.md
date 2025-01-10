@@ -16,6 +16,7 @@ An implementation of the Canny edge detection algorithm using tinygrad tensors a
 1. Install dependencies:
 ```bash
 uv venv
+source .venv/bin/activate.fish
 uv pip install -r requirements.txt
 ```
 
