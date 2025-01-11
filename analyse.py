@@ -1,186 +1,61 @@
 import re
 import sys
-import json
 import argparse
-from dataclasses import dataclass
-from typing import List, Optional
-
-@dataclass
-class KernelInfo:
-    name: str
-    device: str
-    runtime: float  # in microseconds
-    memory: float  # in GB
-    gflops: float
-    bandwidth: tuple[float, float]  # GB/s (read|write)
-    operations: List[str]
-    kernel_code: Optional[str] = None
 
 def remove_ansi_codes(text: str) -> str:
     """Remove ANSI color codes from text."""
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     return ansi_escape.sub('', text)
 
-def parse_tinygrad_log(log_content: str) -> List[KernelInfo]:
-    kernels = []
-    current_kernel = None
-    code_buffer = []
-    lines = [line for line in log_content.split('\n') if line.strip()]
-
-    # Updated pattern to be more flexible
-    kernel_pattern = r'\*\*\* (\w+)\s+\d+\s+([^,]+(?:,[\s\w<>-]+)?)\s+arg\s+(\d+)\s+mem\s+([\d.]+)\s+GB\s+tm\s+([\d.]+)us/\s*([\d.]+)ms\s*\(\s*([\d.]+)\s+GFLOPS\s+([\d.]+)\|([\d.]+)\s+GB/s\)(?:\s+\[(.*?)\])?'
-
-    for i, line in enumerate(lines):
-        # Remove ANSI color codes before processing
+def filter_relevant_lines(log_content: str) -> list[str]:
+    """Filter log content to only include kernel runtime info and code."""
+    relevant_lines = []
+    lines = log_content.split('\n')
+    in_kernel_code = False
+    
+    for line in lines:
         clean_line = remove_ansi_codes(line.strip())
-
-        # Try to match kernel information line
-        kernel_match = re.match(kernel_pattern, clean_line)
-
-        if kernel_match:
-            # If we were processing a previous kernel, store its code
-            if current_kernel:
-                # Only store code if this was a compute kernel, not a copy operation
-                if not current_kernel.name.startswith('copy'):
-                    current_kernel.kernel_code = '\n'.join(code_buffer) if code_buffer else None
-                kernels.append(current_kernel)
-                code_buffer = []
-
-            # Look ahead for kernel code before creating the new kernel
-            code_buffer = []
-            in_code = False
-            for next_line in lines[i+1:]:
-                clean_next_line = remove_ansi_codes(next_line)
-
-                # Break if we hit the next kernel
-                if clean_next_line.startswith('***'):
-                    break
-
-                # Start collecting code at metal_stdlib
-                if '#include <metal_stdlib>' in clean_next_line:
-                    in_code = True
-                # Skip UOp sections
-                elif clean_next_line.startswith('UOp('):
-                    in_code = False
-                    continue
-                # Skip Opt sections
-                elif clean_next_line.startswith('[Opt('):
-                    in_code = False
-                    continue
-
-                if in_code:
-                    code_buffer.append(clean_next_line)
-
-            # Parse kernel information
-            device = kernel_match.group(1)
-            name = kernel_match.group(2).strip()
-            memory = float(kernel_match.group(4))
-            # Use the ms value for runtime instead of us
-            runtime = float(kernel_match.group(6)) * 1000  # Convert ms to us
-            gflops = float(kernel_match.group(7))
-            bandwidth = (float(kernel_match.group(8)), float(kernel_match.group(9)))
-            operations = []
-            if kernel_match.group(10):  # Operations are optional
-                operations = [op.strip() for op in kernel_match.group(10).split(',') if op.strip()]
-
-            current_kernel = KernelInfo(
-                name=name,
-                device=device,
-                runtime=runtime,
-                memory=memory,
-                gflops=gflops,
-                bandwidth=bandwidth,
-                operations=operations
-            )
-
-            # Store the code buffer for this kernel
-            if code_buffer and not name.startswith('copy'):
-                current_kernel.kernel_code = '\n'.join(code_buffer)
-
-    # Don't forget the last kernel
-    if current_kernel:
-        kernels.append(current_kernel)
-
-    return kernels
-
-def simplify_kernel_name(name: str) -> str:
-    """Simplify kernel names, especially for copy operations."""
-    if name.startswith('copy'):
-        # Extract the device transfer part (e.g., "METAL <- NPY")
-        parts = name.split(',')
-        if len(parts) > 1:
-            transfer = parts[1].strip()
-            return f"copy {transfer}"
-    return name
-
-def generate_kernel_summary(kernels: List[KernelInfo]):
-    total_runtime = sum(k.runtime for k in kernels)
-    total_gflops = sum(k.gflops for k in kernels)
-
-    # Group kernels by device
-    by_device = {}
-    for k in kernels:
-        by_device.setdefault(k.device, []).append(k)
-
-    # Create device summaries
-    device_summaries = {}
-    for device, device_kernels in by_device.items():
-        device_summaries[device] = {
-            "count": len(device_kernels),
-            "total_runtime": round(sum(k.runtime for k in device_kernels), 2),
-            "total_gflops": round(sum(k.gflops for k in device_kernels), 2)
-        }
-
-    # Create detailed kernel info
-    kernel_details = []
-    for i, kernel in enumerate(kernels, 1):
-        kernel_info = {
-            "id": i,
-            "name": simplify_kernel_name(kernel.name),
-            "device": kernel.device,
-            "runtime": round(kernel.runtime, 2),
-            "memory": round(kernel.memory, 2),
-            "gflops": round(kernel.gflops, 2),
-            "bandwidth": {
-                "read": round(kernel.bandwidth[0], 1),
-                "write": round(kernel.bandwidth[1], 1)
-            }
-        }
         
-        if kernel.operations:
-            kernel_info["operations"] = kernel.operations
-        if kernel.kernel_code:
-            kernel_info["kernel_code"] = kernel.kernel_code
+        # Skip empty lines
+        if not clean_line:
+            continue
             
-        kernel_details.append(kernel_info)
-
-    return {
-        "summary": {
-            "kernel_count": len(kernels),
-            "total_runtime": round(total_runtime, 2),
-            "total_gflops": round(total_gflops, 2),
-            "average_gflops_per_kernel": round(total_gflops/len(kernels), 2)
-        },
-        "device_summaries": device_summaries,
-        "kernels": kernel_details
-    }
+        # Capture kernel runtime info lines
+        if clean_line.startswith('***'):
+            relevant_lines.append(clean_line)
+            continue
+            
+        # Handle kernel code sections
+        if '#include <metal_stdlib>' in clean_line:
+            in_kernel_code = True
+        elif clean_line.startswith('***'):
+            in_kernel_code = False
+            
+        # Skip UOp and Opt sections
+        if clean_line.startswith(('UOp(', '[Opt(')):
+            continue
+            
+        # Capture kernel code
+        if in_kernel_code:
+            relevant_lines.append(clean_line)
+            
+    return relevant_lines
 
 def main():
-    parser = argparse.ArgumentParser(description='Parse and analyze tinygrad logs')
+    parser = argparse.ArgumentParser(description='Filter and display relevant tinygrad log content')
     parser.add_argument('log_file', type=str, help='Path to the tinygrad log file')
-
+    
     args = parser.parse_args()
-
+    
     try:
         # Read log file
         with open(args.log_file, 'r') as f:
             log_content = f.read()
-
-        # Parse and output JSON summary
-        kernels = parse_tinygrad_log(log_content)
-        summary = generate_kernel_summary(kernels)
-        print(json.dumps(summary, indent=2))
-
+            
+        # Filter and display relevant lines
+        relevant_lines = filter_relevant_lines(log_content)
+        print('\n'.join(relevant_lines))
+        
     except FileNotFoundError:
         print(f"Error: Could not find log file '{args.log_file}'")
         sys.exit(1)
