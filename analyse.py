@@ -46,12 +46,18 @@ def parse_tinygrad_log(log_content: str) -> List[KernelInfo]:
             device = kernel_match.group(1)
             name = kernel_match.group(2).strip()
             memory = float(kernel_match.group(4))
-            runtime = float(kernel_match.group(5))
+            # Use the ms value for runtime instead of us
+            runtime = float(kernel_match.group(6)) * 1000  # Convert ms to us
             gflops = float(kernel_match.group(7))
             bandwidth = (float(kernel_match.group(8)), float(kernel_match.group(9)))
             operations = []
             if kernel_match.group(10):  # Operations are optional
                 operations = [op.strip() for op in kernel_match.group(10).split(',') if op.strip()]
+
+            # Extract kernel shape parameters from name
+            parameters = None
+            if '_' in name:
+                parameters = name.split(',')[0].strip()  # Get the r_XXX part before any comma
 
             current_kernel = KernelInfo(
                 name=name,
@@ -60,10 +66,11 @@ def parse_tinygrad_log(log_content: str) -> List[KernelInfo]:
                 memory=memory,
                 gflops=gflops,
                 bandwidth=bandwidth,
-                operations=operations
+                operations=operations,
+                parameters=parameters
             )
 
-            # Look ahead for kernel parameters and code
+            # Look ahead for kernel code
             code_buffer = []
             in_code = False
             for next_line in lines[i+1:]:
@@ -72,11 +79,6 @@ def parse_tinygrad_log(log_content: str) -> List[KernelInfo]:
                 # Break if we hit the next kernel
                 if clean_next_line.startswith('***'):
                     break
-
-                # Capture beam/hc parameters
-                if clean_next_line.strip().startswith(('beam', 'hc')):
-                    current_kernel.parameters = clean_next_line.strip()
-                    continue
 
                 # Start collecting code at metal_stdlib
                 if '#include <metal_stdlib>' in clean_next_line:
