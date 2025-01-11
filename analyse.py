@@ -104,6 +104,16 @@ def parse_tinygrad_log(log_content: str) -> List[KernelInfo]:
 
     return kernels
 
+def simplify_kernel_name(name: str) -> str:
+    """Simplify kernel names, especially for copy operations."""
+    if name.startswith('copy'):
+        # Extract the device transfer part (e.g., "METAL <- NPY")
+        parts = name.split(',')
+        if len(parts) > 1:
+            transfer = parts[1].strip()
+            return f"copy {transfer}"
+    return name
+
 def generate_kernel_summary(kernels: List[KernelInfo]):
     total_runtime = sum(k.runtime for k in kernels)
     total_gflops = sum(k.gflops for k in kernels)
@@ -127,7 +137,7 @@ def generate_kernel_summary(kernels: List[KernelInfo]):
     for i, kernel in enumerate(kernels, 1):
         kernel_info = {
             "id": i,
-            "name": kernel.name,
+            "name": simplify_kernel_name(kernel.name),
             "device": kernel.device,
             "runtime": round(kernel.runtime, 2),
             "memory": round(kernel.memory, 2),
