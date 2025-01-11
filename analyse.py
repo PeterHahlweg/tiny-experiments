@@ -46,29 +46,7 @@ def parse_tinygrad_log(log_content: str) -> List[KernelInfo]:
                 kernels.append(current_kernel)
                 code_buffer = []
 
-            # Parse kernel information
-            device = kernel_match.group(1)
-            name = kernel_match.group(2).strip()
-            memory = float(kernel_match.group(4))
-            # Use the ms value for runtime instead of us
-            runtime = float(kernel_match.group(6)) * 1000  # Convert ms to us
-            gflops = float(kernel_match.group(7))
-            bandwidth = (float(kernel_match.group(8)), float(kernel_match.group(9)))
-            operations = []
-            if kernel_match.group(10):  # Operations are optional
-                operations = [op.strip() for op in kernel_match.group(10).split(',') if op.strip()]
-
-            current_kernel = KernelInfo(
-                name=name,
-                device=device,
-                runtime=runtime,
-                memory=memory,
-                gflops=gflops,
-                bandwidth=bandwidth,
-                operations=operations
-            )
-
-            # Look ahead for kernel code
+            # Look ahead for kernel code before creating the new kernel
             code_buffer = []
             in_code = False
             for next_line in lines[i+1:]:
@@ -92,6 +70,28 @@ def parse_tinygrad_log(log_content: str) -> List[KernelInfo]:
 
                 if in_code:
                     code_buffer.append(clean_next_line)
+
+            # Parse kernel information
+            device = kernel_match.group(1)
+            name = kernel_match.group(2).strip()
+            memory = float(kernel_match.group(4))
+            # Use the ms value for runtime instead of us
+            runtime = float(kernel_match.group(6)) * 1000  # Convert ms to us
+            gflops = float(kernel_match.group(7))
+            bandwidth = (float(kernel_match.group(8)), float(kernel_match.group(9)))
+            operations = []
+            if kernel_match.group(10):  # Operations are optional
+                operations = [op.strip() for op in kernel_match.group(10).split(',') if op.strip()]
+
+            current_kernel = KernelInfo(
+                name=name,
+                device=device,
+                runtime=runtime,
+                memory=memory,
+                gflops=gflops,
+                bandwidth=bandwidth,
+                operations=operations
+            )
 
             if code_buffer:
                 current_kernel.kernel_code = '\n'.join(code_buffer)
