@@ -25,6 +25,7 @@ def remove_ansi_codes(text: str) -> str:
 def parse_tinygrad_log(log_content: str) -> List[KernelInfo]:
     kernels = []
     current_kernel = None
+    code_buffer = []
     lines = [line for line in log_content.split('\n') if line.strip()]
 
     # Updated pattern to be more flexible
