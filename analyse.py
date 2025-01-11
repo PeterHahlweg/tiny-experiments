@@ -14,7 +14,6 @@ class KernelInfo:
     gflops: float
     bandwidth: tuple[float, float]  # GB/s (read|write)
     operations: List[str]
-    parameters: Optional[str] = None
     kernel_code: Optional[str] = None
 
 def remove_ansi_codes(text: str) -> str:
@@ -59,11 +58,6 @@ def parse_tinygrad_log(log_content: str) -> List[KernelInfo]:
             if kernel_match.group(10):  # Operations are optional
                 operations = [op.strip() for op in kernel_match.group(10).split(',') if op.strip()]
 
-            # Extract kernel shape parameters from name
-            parameters = None
-            if '_' in name:
-                parameters = name.split(',')[0].strip()  # Get the r_XXX part before any comma
-
             current_kernel = KernelInfo(
                 name=name,
                 device=device,
@@ -71,8 +65,7 @@ def parse_tinygrad_log(log_content: str) -> List[KernelInfo]:
                 memory=memory,
                 gflops=gflops,
                 bandwidth=bandwidth,
-                operations=operations,
-                parameters=parameters
+                operations=operations
             )
 
             # Look ahead for kernel code
@@ -158,8 +151,6 @@ def generate_kernel_summary(kernels: List[KernelInfo]):
         
         if kernel.operations:
             kernel_info["operations"] = kernel.operations
-        if kernel.parameters:
-            kernel_info["parameters"] = kernel.parameters
         if kernel.kernel_code:
             kernel_info["kernel_code"] = kernel.kernel_code
             
