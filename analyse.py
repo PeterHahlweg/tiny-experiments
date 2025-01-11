@@ -40,7 +40,11 @@ def parse_tinygrad_log(log_content: str) -> List[KernelInfo]:
         if kernel_match:
             # If we were processing a previous kernel, store its code
             if current_kernel:
+                # Only store code if this was a compute kernel, not a copy operation
+                if not current_kernel.name.startswith('copy'):
+                    current_kernel.kernel_code = '\n'.join(code_buffer) if code_buffer else None
                 kernels.append(current_kernel)
+                code_buffer = []
 
             # Parse kernel information
             device = kernel_match.group(1)
@@ -100,6 +104,9 @@ def parse_tinygrad_log(log_content: str) -> List[KernelInfo]:
 
     # Don't forget the last kernel
     if current_kernel:
+        # Only store code if this was a compute kernel, not a copy operation
+        if not current_kernel.name.startswith('copy'):
+            current_kernel.kernel_code = '\n'.join(code_buffer) if code_buffer else None
         kernels.append(current_kernel)
 
     return kernels
