@@ -10,6 +10,7 @@ def remove_ansi_codes(text: str) -> str:
 def filter_relevant_lines(log_content: str) -> list[str]:
     """Filter log content to only include kernel runtime info and code."""
     relevant_lines = []
+    kernel_code_buffer = []
     lines = log_content.split('\n')
     in_kernel_code = False
     
@@ -20,24 +21,33 @@ def filter_relevant_lines(log_content: str) -> list[str]:
         if not clean_line:
             continue
             
-        # Capture kernel runtime info lines
-        if clean_line.startswith('***'):
-            relevant_lines.append(clean_line)
-            continue
-            
         # Handle kernel code sections
         if '#include <metal_stdlib>' in clean_line:
             in_kernel_code = True
+            kernel_code_buffer = [clean_line]
+            continue
         elif clean_line.startswith('***'):
-            in_kernel_code = False
+            if in_kernel_code:
+                # Add collected kernel code before the kernel info
+                relevant_lines.extend(kernel_code_buffer)
+                relevant_lines.append('-' * 80)  # Add separator
+                kernel_code_buffer = []
+                in_kernel_code = False
+            relevant_lines.append(clean_line)
+            continue
             
         # Skip UOp and Opt sections
         if clean_line.startswith(('UOp(', '[Opt(')):
             continue
             
-        # Capture kernel code
+        # Collect kernel code
         if in_kernel_code:
-            relevant_lines.append(clean_line)
+            kernel_code_buffer.append(clean_line)
+            
+    # Add any remaining kernel code
+    if kernel_code_buffer:
+        relevant_lines.extend(kernel_code_buffer)
+        relevant_lines.append('-' * 80)
             
     return relevant_lines
 
