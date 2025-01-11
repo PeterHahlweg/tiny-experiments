@@ -30,10 +30,10 @@ def filter_relevant_lines(log_content: str) -> list[str]:
             if in_kernel_code:
                 # Add collected kernel code before the kernel info
                 relevant_lines.extend(kernel_code_buffer)
-                relevant_lines.append('-' * 80)  # Add separator
                 kernel_code_buffer = []
                 in_kernel_code = False
             relevant_lines.append(clean_line)
+            relevant_lines.append('-' * 80)  # Add separator after kernel info
             continue
             
         # Skip UOp and Opt sections
