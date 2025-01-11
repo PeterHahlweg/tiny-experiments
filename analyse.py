@@ -93,15 +93,12 @@ def parse_tinygrad_log(log_content: str) -> List[KernelInfo]:
                 operations=operations
             )
 
-            # Only assign code if this is not a copy operation
+            # Store the code buffer for this kernel
             if code_buffer and not name.startswith('copy'):
                 current_kernel.kernel_code = '\n'.join(code_buffer)
 
     # Don't forget the last kernel
     if current_kernel:
-        # Only store code if this was a compute kernel, not a copy operation
-        if not current_kernel.name.startswith('copy'):
-            current_kernel.kernel_code = '\n'.join(code_buffer) if code_buffer else None
         kernels.append(current_kernel)
 
     return kernels
