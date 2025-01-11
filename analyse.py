@@ -1,5 +1,6 @@
 import re
 import sys
+import json
 import argparse
 from dataclasses import dataclass
 from typing import List, Optional
@@ -101,53 +102,59 @@ def parse_tinygrad_log(log_content: str) -> List[KernelInfo]:
 
     return kernels
 
-def print_kernel_summary(kernels: List[KernelInfo]):
-    print(f"\nFound {len(kernels)} kernels\n")
-
+def generate_kernel_summary(kernels: List[KernelInfo]):
     total_runtime = sum(k.runtime for k in kernels)
     total_gflops = sum(k.gflops for k in kernels)
-
-    # Print overall summary
-    print("Overall Summary:")
-    print(f"Total Runtime: {total_runtime:.2f} µs")
-    print(f"Total GFLOPS: {total_gflops:.2f}")
-    print(f"Average GFLOPS per kernel: {total_gflops/len(kernels):.2f}\n")
 
     # Group kernels by device
     by_device = {}
     for k in kernels:
         by_device.setdefault(k.device, []).append(k)
 
+    # Create device summaries
+    device_summaries = {}
     for device, device_kernels in by_device.items():
-        print(f"\n{device} Kernels Summary:")
-        print(f"Count: {len(device_kernels)}")
-        print(f"Total Runtime: {sum(k.runtime for k in device_kernels):.2f} µs")
-        print(f"Total GFLOPS: {sum(k.gflops for k in device_kernels):.2f}")
+        device_summaries[device] = {
+            "count": len(device_kernels),
+            "total_runtime": round(sum(k.runtime for k in device_kernels), 2),
+            "total_gflops": round(sum(k.gflops for k in device_kernels), 2)
+        }
 
-    print("\nDetailed Kernel Information:")
-    print("=" * 80)
-
+    # Create detailed kernel info
+    kernel_details = []
     for i, kernel in enumerate(kernels, 1):
-        print(f"\nKernel {i}: {kernel.name}")
-        print(f"{'='*80}")
-        print(f"Device: {kernel.device}")
-        print(f"Runtime: {kernel.runtime:.2f} µs")
-        print(f"Memory: {kernel.memory:.2f} GB")
-        print(f"Performance: {kernel.gflops:.2f} GFLOPS")
-        print(f"Bandwidth (Read|Write): {kernel.bandwidth[0]:.1f}|{kernel.bandwidth[1]:.1f} GB/s")
-
+        kernel_info = {
+            "id": i,
+            "name": kernel.name,
+            "device": kernel.device,
+            "runtime": round(kernel.runtime, 2),
+            "memory": round(kernel.memory, 2),
+            "gflops": round(kernel.gflops, 2),
+            "bandwidth": {
+                "read": round(kernel.bandwidth[0], 1),
+                "write": round(kernel.bandwidth[1], 1)
+            }
+        }
+        
         if kernel.operations:
-            print(f"Operations: {', '.join(kernel.operations)}")
-
+            kernel_info["operations"] = kernel.operations
         if kernel.parameters:
-            print("\nParameters:")
-            print(kernel.parameters)
-
+            kernel_info["parameters"] = kernel.parameters
         if kernel.kernel_code:
-            print("\nKernel Code:")
-            print(kernel.kernel_code)
+            kernel_info["kernel_code"] = kernel.kernel_code
+            
+        kernel_details.append(kernel_info)
 
-        print("\n" + "-"*80)
+    return {
+        "summary": {
+            "kernel_count": len(kernels),
+            "total_runtime": round(total_runtime, 2),
+            "total_gflops": round(total_gflops, 2),
+            "average_gflops_per_kernel": round(total_gflops/len(kernels), 2)
+        },
+        "device_summaries": device_summaries,
+        "kernels": kernel_details
+    }
 
 def main():
     parser = argparse.ArgumentParser(description='Parse and analyze tinygrad logs')
@@ -160,9 +167,10 @@ def main():
         with open(args.log_file, 'r') as f:
             log_content = f.read()
 
-        # Parse and print summary
+        # Parse and output JSON summary
         kernels = parse_tinygrad_log(log_content)
-        print_kernel_summary(kernels)
+        summary = generate_kernel_summary(kernels)
+        print(json.dumps(summary, indent=2))
 
     except FileNotFoundError:
         print(f"Error: Could not find log file '{args.log_file}'")
