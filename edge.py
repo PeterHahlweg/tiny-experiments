@@ -136,50 +136,46 @@ class CannyEdgeDetector:
         
         return result
 
-    def detect_edges(self, image: Tensor, low_threshold: float = 0.1,
-               high_threshold: float = 0.3, sigma: Optional[float] = None) -> Tensor:
-        """Canny edge detection with proper blur handling and intermediate results
+    def detect_edges(self, image: Tensor, dump_dir: Optional[str] = None) -> Tensor:
+        """Canny edge detection with optional intermediate result dumping
         
         Args:
             image: Input image tensor
-            low_threshold: Lower threshold for hysteresis
-            high_threshold: Higher threshold for hysteresis
-            sigma: Gaussian blur sigma (0 for no blur)
+            dump_dir: Directory to save intermediate results (None to disable)
             
         Returns:
             Tensor containing the detected edges
         """
-           # Use instance default if sigma not provided
-        sigma = self.default_blur_sigma if sigma is None else sigma
-        print(f"detect_edges: sigma = {sigma}")  # Debug print
-
-        # 1. Gaussian smoothing (optional based on sigma)
-        EPSILON = 1e-6  # Small threshold for float comparison
-        if sigma > EPSILON: 
-            smoothed = self.gaussian_blur(image, kernel_size=None, sigma=sigma)
-            save_image(smoothed.numpy(), os.path.join(args.output_dir, '1_gaussian_blur.png'))
-        else:
-            save_image(image.numpy(), os.path.join(args.output_dir, '1_gaussian_blur.png'))
-            smoothed = image
+        # Fixed thresholds
+        low_threshold = 0.1
+        high_threshold = 0.3
+        
+        # 1. Gaussian smoothing
+        smoothed = self.gaussian_blur(image)
+        if dump_dir:
+            save_image(smoothed.numpy(), os.path.join(dump_dir, '1_gaussian_blur.png'))
 
         # 2. Compute gradients using Sobel
         magnitude, direction = self.compute_gradients(smoothed)
-        save_image(magnitude.numpy(), os.path.join(args.output_dir, '2_gradient_magnitude.png'))
+        if dump_dir:
+            save_image(magnitude.numpy(), os.path.join(dump_dir, '2_gradient_magnitude.png'))
 
         # 3. Non-maximum suppression
         suppressed = self.non_maximum_suppression(magnitude, direction)
-        save_image(suppressed.numpy(), os.path.join(args.output_dir, '3_nonmax_suppression.png'))
+        if dump_dir:
+            save_image(suppressed.numpy(), os.path.join(dump_dir, '3_nonmax_suppression.png'))
 
         # 4. Double thresholding
         high_mask = (suppressed > high_threshold).float()
         low_mask = (suppressed > low_threshold).float()
-        save_image(high_mask.numpy(), os.path.join(args.output_dir, '4a_high_threshold.png'))
-        save_image(low_mask.numpy(), os.path.join(args.output_dir, '4b_low_threshold.png'))
+        if dump_dir:
+            save_image(high_mask.numpy(), os.path.join(dump_dir, '4a_high_threshold.png'))
+            save_image(low_mask.numpy(), os.path.join(dump_dir, '4b_low_threshold.png'))
 
         # 5. Edge tracking by hysteresis
-        # First identify weak edges (edges that pass low but not high threshold)
         weak_edges = (low_mask - high_mask).relu()
-        save_image(weak_edges.numpy(), os.path.join(args.output_dir, '5a_weak_edges.png'))
+        if dump_dir:
+            save_image(weak_edges.numpy(), os.path.join(dump_dir, '5a_weak_edges.png'))
 
         # Setup convolution for checking neighbors
         edges_4d = high_mask.reshape(1, 1, *high_mask.shape)
@@ -189,7 +185,8 @@ class CannyEdgeDetector:
 
         # Find weak edges connected to strong edges
         neighbor_strong = (neighbor_check(edges_4d)[0, 0] > 0).float()
-        save_image(neighbor_strong.numpy(), os.path.join(args.output_dir, '5b_strong_neighbors.png'))
+        if dump_dir:
+            save_image(neighbor_strong.numpy(), os.path.join(dump_dir, '5b_strong_neighbors.png'))
 
         # Combine strong edges with connected weak edges
         final_edges = high_mask + (weak_edges * neighbor_strong)
@@ -217,12 +214,8 @@ if __name__ == "__main__":
                        help='Output directory for results')
     parser.add_argument('--use-test-image', '-t', action='store_true',
                        help='Use built-in test image instead of loading from file')
-    parser.add_argument('--blur-sigma', type=float, default=1.0,
-                       help='Sigma value for Gaussian blur')
-    parser.add_argument('--low-threshold', type=float, default=0.1,
-                       help='Low threshold for edge detection')
-    parser.add_argument('--high-threshold', type=float, default=0.3,
-                       help='High threshold for edge detection')
+    parser.add_argument('--dump', action='store_true',
+                       help='Save intermediate processing results')
     args = parser.parse_args()
 
     print(f"Command line blur-sigma = {args.blur_sigma}")
@@ -246,13 +239,12 @@ if __name__ == "__main__":
     image = Tensor(image_array)
 
     print("Initializing Canny edge detector...")
-    detector = CannyEdgeDetector(default_blur_sigma=args.blur_sigma)
+    detector = CannyEdgeDetector()
 
     print("\nDetecting edges...")
     edges = detector.detect_edges(
         image,
-        low_threshold=args.low_threshold,
-        high_threshold=args.high_threshold
+        dump_dir=args.output_dir if args.dump else None
     )
 
     # Save result
