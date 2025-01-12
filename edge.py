@@ -51,18 +51,18 @@ class CannyEdgeDetector:
         """Apply Gaussian blur with proper handling of zero sigma"""
         sigma = sigma or self.default_blur_sigma
         print(f"detect_edges: sigma = {sigma}")  # Debug print
-        
+
         # If sigma is very close to 0, return original image
         if abs(sigma) < 1e-4:
             return image
-            
+
         # Calculate appropriate kernel size if not provided
         if kernel_size is None:
             # Ensure kernel size is at least 3 and odd
             kernel_size = max(3, int(6 * sigma))
             if kernel_size % 2 == 0:
                 kernel_size += 1
-                
+
         if kernel_size < 3:
             kernel_size = 3
 
@@ -70,7 +70,7 @@ class CannyEdgeDetector:
         gaussian_conv = Conv2d(1, 1, kernel_size, padding=kernel_size//2, bias=False)
         gaussian_conv.weight = gaussian_kernel
 
-        return self.apply_filter(image, gaussian_conv)   
+        return self.apply_filter(image, gaussian_conv)
 
     def compute_gradients(self, image: Tensor):
         """Compute gradients using Sobel operators"""
@@ -84,7 +84,7 @@ class CannyEdgeDetector:
 
     def non_maximum_suppression(self, magnitude: Tensor, direction: Tensor) -> Tensor:
         """Apply non-maximum suppression using available tinygrad operations
-        
+
         Args:
             magnitude: Gradient magnitude tensor
             direction: Gradient direction tensor (dy/dx)
@@ -94,16 +94,16 @@ class CannyEdgeDetector:
         norm = (direction * direction + 1).sqrt()  # sqrt(dx^2 + dy^2) where dx=1
         dx = (1 / norm)  # normalized dx
         dy = (direction / norm)  # normalized dy
-        
+
         # Bin the directions into 4 categories based on dx and dy components
         # We can use the sign and relative magnitude of dx and dy
-        direction_id = ((dy >= dx) * 1 + 
+        direction_id = ((dy >= dx) * 1 +
                        (dy >= -dx) * 2)  # This gives us 4 direction bins
-        
+
         # Pad magnitude for neighbor operations
         padded = magnitude.pad(((1,1), (1,1)))
         h, w = magnitude.shape
-        
+
         # Pre-compute all neighbor values we might need
         n_left = padded[1:h+1, 0:w]
         n_right = padded[1:h+1, 2:w+2]
@@ -113,19 +113,19 @@ class CannyEdgeDetector:
         n_topright = padded[0:h, 2:w+2]
         n_bottomleft = padded[2:h+2, 0:w]
         n_bottomright = padded[2:h+2, 2:w+2]
-        
+
         # Create masks for each direction
         d0 = (direction_id == 0).float()  # Horizontal
         d1 = (direction_id == 1).float()  # 45 degrees
         d2 = (direction_id == 2).float()  # Vertical
         d3 = (direction_id == 3).float()  # 135 degrees
-        
+
         # Compare with neighbors based on direction
         suppress0 = (magnitude >= n_left) * (magnitude >= n_right)
         suppress1 = (magnitude >= n_topright) * (magnitude >= n_bottomleft)
         suppress2 = (magnitude >= n_up) * (magnitude >= n_down)
         suppress3 = (magnitude >= n_topleft) * (magnitude >= n_bottomright)
-        
+
         # Combine results
         result = magnitude * (
             d0 * suppress0 +
@@ -133,23 +133,23 @@ class CannyEdgeDetector:
             d2 * suppress2 +
             d3 * suppress3
         )
-        
+
         return result
 
     def detect_edges(self, image: Tensor, dump_dir: Optional[str] = None) -> Tensor:
         """Canny edge detection with optional intermediate result dumping
-        
+
         Args:
             image: Input image tensor
             dump_dir: Directory to save intermediate results (None to disable)
-            
+
         Returns:
             Tensor containing the detected edges
         """
         # Fixed thresholds
         low_threshold = 0.1
         high_threshold = 0.3
-        
+
         # 1. Gaussian smoothing
         smoothed = self.gaussian_blur(image)
         if dump_dir:
@@ -218,7 +218,9 @@ if __name__ == "__main__":
                        help='Save intermediate processing results')
     args = parser.parse_args()
 
-    print(f"Command line blur-sigma = {args.blur_sigma}")
+    blur_sigma = 0.3
+
+    print(f"Command line blur-sigma = {blur_sigma}")
 
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
