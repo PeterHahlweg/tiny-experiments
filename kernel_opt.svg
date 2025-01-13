@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 350">
+  <!-- Background -->
+  <rect width="100%" height="100%" fill="#1e1e1e"/>
+
+  <!-- Text styling -->
+  <style>
+    .monospace { font-family: monospace; }
+    .log-text { fill: #ffffff; }
+    .blue { fill: #4F94FF; }
+    .cyan { fill: #00CED1; }
+    .red { fill: #FF6B6B; }
+    .yellow { fill: #FFD700; }
+    .purple { fill: #DA70D6; }
+    .green { fill: #98FB98; }
+  </style>
+
+  <!-- Log entries -->
+  <g class="monospace" font-size="12">
+    <text x="20" y="30" class="log-text">0.00s: 0.00 us from 1 -> 1 actions</text>
+    <text x="400" y="30" class="blue">540</text>
+    <text x="460" y="30" class="cyan">960</text>
+    <text x="520" y="30" class="red">3</text>
+    <text x="580" y="30" class="yellow">3</text>
+    <text x="640" y="30" class="purple">-</text>
+
+    <text x="20" y="60" class="log-text">0.46s: 860.31 us from 22 -> 22 actions</text>
+    <text x="400" y="60" class="blue">540</text>
+    <text x="460" y="60" class="cyan">60</text>
+    <text x="520" y="60" class="red">16</text>
+    <text x="580" y="60" class="yellow">3</text>
+    <text x="640" y="60" class="purple">3</text>
+
+    <!-- Additional log entries -->
+    <text x="20" y="90" class="log-text">16.13s: 418.75 us from 476 -> 326 actions</text>
+    <text x="400" y="90" class="blue">540</text>
+    <text x="460" y="90" class="cyan">12</text>
+    <text x="520" y="90" class="red">16</text>
+    <text x="580" y="90" class="yellow">3</text>
+    <text x="640" y="90" class="purple">3</text>
+    <text x="700" y="90" class="yellow">5</text>
+
+    <!-- Continue with remaining entries... -->
+    <text x="20" y="120" class="log-text">192.95s: 216.20 us from 2570 -> 2023 actions</text>
+    <text x="400" y="120" class="blue">540</text>
+    <text x="460" y="120" class="cyan">30</text>
+    <text x="520" y="120" class="red">16</text>
+    <text x="580" y="120" class="yellow">3</text>
+    <text x="640" y="120" class="yellow">2</text>
+    <text x="700" y="120" class="purple">3</text>
+
+    <text x="20" y="150" class="log-text">512.33s: 154.27 us from 2440 -> 2267 actions</text>
+    <text x="400" y="150" class="blue">540</text>
+    <text x="460" y="150" class="cyan">10</text>
+    <text x="520" y="150" class="red">8</text>
+    <text x="580" y="150" class="yellow">3</text>
+    <text x="640" y="150" class="yellow">4</text>
+    <text x="700" y="150" class="purple">3</text>
+
+    <text x="20" y="180" class="log-text">769.37s: 136.61 us from 2150 -> 1932 actions</text>
+    <text x="400" y="180" class="blue">135</text>
+    <text x="460" y="180" class="cyan">30</text>
+    <text x="520" y="180" class="red">16</text>
+    <text x="580" y="180" class="yellow">2</text>
+    <text x="640" y="180" class="yellow">3</text>
+    <text x="700" y="180" class="purple">4</text>
+    <text x="760" y="180" class="purple">3</text>
+
+    <text x="20" y="210" class="log-text">1004.42s: 110.94 us from 1982 -> 1791 actions</text>
+    <text x="400" y="210" class="blue">45</text>
+    <text x="460" y="210" class="cyan">30</text>
+    <text x="520" y="210" class="red">8</text>
+    <text x="580" y="210" class="yellow">4</text>
+    <text x="640" y="210" class="yellow">4</text>
+    <text x="700" y="210" class="purple">3</text>
+    <text x="760" y="210" class="purple">4</text>
+
+    <text x="20" y="240" class="log-text">1191.74s: 109.01 us from 1626 -> 1429 actions</text>
+    <text x="400" y="240" class="blue">30</text>
+    <text x="460" y="240" class="cyan">15</text>
+    <text x="520" y="240" class="red">16</text>
+    <text x="580" y="240" class="yellow">2</text>
+    <text x="640" y="240" class="yellow">3</text>
+    <text x="700" y="240" class="purple">4</text>
+    <text x="760" y="240" class="purple">3</text>
+    <text x="820" y="240" class="purple">3</text>
+
+    <text x="20" y="270" class="log-text">1294.87s: 99.17 us from 1173 -> 930 actions</text>
+    <text x="400" y="270" class="blue">64</text>
+    <text x="460" y="270" class="cyan">32</text>
+    <text x="520" y="270" class="red">16</text>
+    <text x="580" y="270" class="yellow">3</text>
+    <text x="640" y="270" class="yellow">4</text>
+    <text x="700" y="270" class="purple">3</text>
+    <text x="760" y="270" class="yellow">3</text>
+    <text x="820" y="270" class="purple">3</text>
+
+    <text x="20" y="300" class="log-text">1387.29s: 99.17 us from 1063 -> 823 actions</text>
+    <text x="400" y="300" class="blue">64</text>
+    <text x="460" y="300" class="cyan">32</text>
+    <text x="520" y="300" class="red">16</text>
+    <text x="580" y="300" class="yellow">3</text>
+    <text x="640" y="300" class="yellow">3</text>
+    <text x="700" y="300" class="purple">3</text>
+
+    <!-- Metal footer -->
+    <text x="20" y="330" class="green">*** METAL</text>
+    <text x="100" y="330" class="log-text">7 r_64_32_16_3_4_3_3_3 arg 3 mem 0.01 GB tm 174.43us/ 3.26ms ( 114.97 GFLOPS 23.8|115.0 GB/s) ['conv2d']</text>
+  </g>
+</svg>
