@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 350">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 580">
   <!-- Background -->
   <rect width="100%" height="100%" fill="#1e1e1e"/>
 
@@ -15,7 +15,7 @@
   </style>
 
   <!-- Log entries -->
-  <g class="monospace" font-size="12">
+  <g class="monospace" font-size="14">
     <text x="20" y="30" class="log-text">0.00s: 0.00 us from 1 -> 1 actions</text>
     <text x="400" y="30" class="blue">540</text>
     <text x="460" y="30" class="cyan">960</text>
@@ -105,5 +105,30 @@
     <!-- Metal footer -->
     <text x="20" y="330" class="green">*** METAL</text>
     <text x="100" y="330" class="log-text">7 r_64_32_16_3_4_3_3_3 arg 3 mem 0.01 GB tm 174.43us/ 3.26ms ( 114.97 GFLOPS 23.8|115.0 GB/s) ['conv2d']</text>
+
+    <!-- Legend -->
+    <!-- Empty line -->
+    <text x="20" y="400" class="log-text"> </text>
+
+    <!-- Legend entries -->
+    <text x="20" y="430" class="log-text">1. </text>
+    <text x="40" y="430" class="blue">GLOBALS</text>
+    <text x="110" y="430" class="log-text">represents the global/grid-level parallelism.</text>
+
+    <text x="20" y="460" class="log-text">2. </text>
+    <text x="40" y="460" class="cyan">LOCALS</text>
+    <text x="110" y="460" class="log-text">represents thread-level parallelism within a block.</text>
+
+    <text x="20" y="490" class="log-text">3. </text>
+    <text x="40" y="490" class="red">REDUCE</text>
+    <text x="110" y="490" class="log-text">related to reduction operations, like summing across dimensions.</text>
+
+    <text x="20" y="520" class="log-text">4. </text>
+    <text x="40" y="520" class="yellow">UPCAST</text>
+    <text x="110" y="520" class="log-text">represents how many elements each thread processes at once.</text>
+
+    <text x="20" y="550" class="log-text">5. </text>
+    <text x="40" y="550" class="purple">UNROLL</text>
+    <text x="110" y="550" class="log-text">represents loop unrolling factor - how many iterations of a loop are expanded inline.</text>
   </g>
 </svg>

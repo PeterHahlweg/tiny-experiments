@@ -38,14 +38,7 @@ The numbers shown under "globals locals reduce upcast unroll" represent differen
 
 <img src="kernel_opt.svg" alt="Log Visualization">
 
-1. <span style="color:#4F94FF; margin-left: 9px;">GLOBALS</span> represents the global/grid-level parallelism.
-2. <span style="color:#00CED1; margin-left: 9px;">LOCALS</span> represents thread-level parallelism within a block.
-3. <span style="color:#FF6B6B; margin-left: 9px;">REDUCE</span> related to reduction operations, like summing across dimensions.
-4. <span style="color:#FFD700; margin-left: 9px;">UPCAST</span> represents how many elements each thread processes at once.
-5. <span style="color:#DA70D6; margin-left: 9px;">UNROLL</span> represents loop unrolling factor - how many iterations of a loop are expanded inline.
-
-The sequence shows the beam search trying different combinations of these parameters, gradually improving performance from 216.20 μs to 99.17 μs in the final optimization step. The numbers r_64_32_16_3_4_3_3_3 at the bottom represent the final optimized configuration.
-The optimization process starts with larger numbers and gradually refines them through beam search to find the optimal combination that gives the best performance for the specific kernel operation being optimized.
+The sequence shows a beam search optimizing these parameters, improving execution time from 216.20 μs to 99.17 μs. The final configuration r_64_32_16_3_4_3_3_3 reflects the optimized values found for each parameter through this search process.
 
 #### BEAM
 Beam is the primary search algorithm that is used when setting `BEAM=1` up to `100`. After 100 the search changes to `MCTS` (Monte Carlo Tree Search).
