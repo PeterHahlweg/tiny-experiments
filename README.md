@@ -22,12 +22,12 @@ uv pip install -r requirements.txt
 
 2. Run the edge detection:
 ```bash
-python edge.py --input your_image.jpg --output-dir output
+python examples/edge.py --use-test-image --output-dir output
 ```
 
-Or try the built-in test image:
+Or try with your own image:
 ```bash
-python edge.py --use-test-image --output-dir output
+python examples/edge.py --input your_image.jpg --output-dir output
 ```
 
 ## Notes

@@ -1,3 +1,9 @@
+#!/usr/bin/env python
+# This example uses the 7'th kernel from a beam run on edge.py in the UOps
+# representation and turns it into the unoptimized kernel code.
+#
+# The printed UOps ast from tinygrad BEAM=1 search is not optimized.
+
 from tinygrad.codegen.kernel import Kernel
 from tinygrad.ops import UOp, Ops, KernelInfo
 from tinygrad.dtype import dtypes
@@ -19,7 +25,5 @@ ast_r_64_32_16_3_4_3_3_3 = UOp(Ops.SINK, dtypes.void, arg=KernelInfo(local_dims=
 
 
 # Get the unoptimized program
-kernel = Kernel(ast_r_64_32_16_3_4_3_3_3)
-program = kernel.to_program()
-print("Unoptimized Kernel Code for r_64_32_16_3_4_3_3_3:")
-print(program.src)
+print("// Unoptimized Kernel Code for r_64_32_16_3_4_3_3_3")
+print(Kernel(ast_r_64_32_16_3_4_3_3_3).to_program().src)
