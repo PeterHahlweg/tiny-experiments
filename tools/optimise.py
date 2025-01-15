@@ -20,7 +20,7 @@ def run_tinygrad_example(command, optimization=False, reports_dir=None):
 
     env = os.environ.copy()
     env["DEBUG"] = "4"  # Enable detailed logging
-    env["BEAM"] = "1" if optimization else "0"
+    env["BEAM"] = "111" if optimization else "0"
 
     # Get absolute paths and set up working directory
     tools_dir = os.path.dirname(os.path.abspath(__file__))  # /path/to/tools
@@ -37,16 +37,6 @@ def run_tinygrad_example(command, optimization=False, reports_dir=None):
     else:
         env['PYTHONPATH'] = project_dir
 
-    # Print debug info before checking tinygrad
-    print(f"\nDebug info:")
-    print(f"Original directory: {original_dir}")
-    print(f"Changed to directory: {os.getcwd()}")
-    print(f"Tools directory: {tools_dir}")
-    print(f"Project directory: {project_dir}")
-    print(f"PYTHONPATH: {env.get('PYTHONPATH', 'not set')}")
-    print(f"Checking if {project_dir}/tinygrad exists: {os.path.exists(os.path.join(project_dir, 'tinygrad'))}")
-    print(f"Python executable: {sys.executable}")
-
     try:
         # Check if tinygrad is installed
         import importlib.util
@@ -58,9 +48,6 @@ def run_tinygrad_example(command, optimization=False, reports_dir=None):
 
         # Replace 'python' with actual Python executable path
         command_parts[0] = sys.executable
-
-        print(f"\nRunning command: {' '.join(command_parts)}")
-        print(f"Environment: DEBUG={env.get('DEBUG')}, BEAM={env.get('BEAM', 'not set')}")
 
         with open(log_file, "w") as f:
             result = subprocess.run(
@@ -207,14 +194,21 @@ def format_memory_operations(data):
 
     for kernel in memory_kernels:
         metrics = kernel.get("metrics", {})
-        size = kernel.get("kernel_name", "").split()[1].rstrip(",")  # Extract size from "copy SIZE, ..."
-        rows.append(f"| {kernel.get('kernel_name', '')} | {size} | "
-                   f"{metrics.get('timing_us', 0):.2f} | {metrics.get('memory_GB', 0):.3f} |")
+        # Extract just the transfer direction (e.g., "METAL <- NPY") from the kernel name
+        kernel_name = kernel.get('kernel_name', '')
+        if ", " in kernel_name:
+            transfer_direction = kernel_name.split(", ", 1)[1]  # Get everything after the first comma
+        else:
+            transfer_direction = kernel_name  # Fallback if no comma found
+
+        rows.append(f"| {transfer_direction} | {metrics.get('memory_GB', 0):.3f} | "
+                   f"{metrics.get('timing_us', 0):.2f} |")
 
     # Add total for memory operations
     total_time = sum(float(k.get("metrics", {}).get("timing_us", 0)) for k in memory_kernels)
     total_memory = sum(float(k.get("metrics", {}).get("memory_GB", 0)) for k in memory_kernels)
-    rows.append(f"| **Total** | | {total_time:.2f} | {total_memory:.3f} |")
+    total_memory = sum(float(k.get("metrics", {}).get("memory_GB", 0)) for k in memory_kernels)
+    rows.append(f"| **Total** | {total_memory:.3f} | {total_time:.2f} |")
     return rows
 
 def generate_markdown_report(command, baseline_data, optimized_data, metrics):
@@ -223,27 +217,64 @@ def generate_markdown_report(command, baseline_data, optimized_data, metrics):
     example_name = os.path.basename(command_parts[1])
 
     report = [
-        f"# Metal Kernel Analysis Documentation - {example_name}\n",
-        f"Example command: `{command}`\n",
-        "## 1. Non-Optimized Run (Compute Kernels)\n",
-        "| Kernel ID | Shape | Memory (GB) | Time (μs) | GFLOPS | Bandwidth (GB/s) | Backend |",
-        "|-----------|--------|-------------|-----------|---------|-----------------|---------|"
+        f"# Kernel Optimisation Report - {example_name}\n",
+        f"Program: `{command}`\n",
+        "## 1. Non-Optimized Compute Kernels\n",
+        "| Kernel ID | Memory (GB) | Time (μs) | GFLOPS | Bandwidth (GB/s) | Backend |",
+        "|-----------|-------------|-----------|---------|-----------------|---------|"
     ]
+
+    # Modified format_kernel_table function inline
+    def format_kernel_table(kernel_data):
+        rows = []
+        total_time_us = 0
+        total_memory = 0
+        total_gflops = 0
+        total_bandwidth = 0
+
+        for kernel in kernel_data.get("kernels", []):
+            if "copy" in kernel.get('kernel_name', '').lower():
+                continue
+
+            metrics = kernel.get("metrics", {})
+            kernel_name = kernel.get('kernel_name', '')
+            timing_us = metrics.get('timing_us', 0)
+            memory_gb = metrics.get('memory_GB', 0)
+            gflops = metrics.get('gflops', 0)
+            bandwidth = metrics.get('bandwidth', 0) or 0
+
+            total_time_us += timing_us
+            total_memory += memory_gb
+            total_gflops += gflops
+            total_bandwidth += bandwidth
+
+            # Use shape as the Kernel ID
+            if "_" in kernel_name and not kernel_name.startswith("copy"):
+                shape = kernel_name
+                rows.append(f"| {shape} | "
+                       f"{memory_gb:.3f} | {timing_us:.2f} | "
+                       f"{gflops:.2f} | {bandwidth:.2f} | "
+                       f"{kernel.get('backend', '')} |")
+
+        # Add totals row with all columns
+        total_time_ms = total_time_us / 1000.0
+        rows.append(f"| **Total** | {total_memory:.3f} | {total_time_us:.2f} | {total_gflops:.2f} | {total_bandwidth:.2f} | |")
+        return rows
 
     report.extend(format_kernel_table(baseline_data))
 
     report.extend([
-        "\n## 2. BEAM Optimized Run (Compute Kernels)\n",
-        "| Kernel ID | Shape | Memory (GB) | Time (μs) | GFLOPS | Bandwidth (GB/s) | Backend |",
-        "|-----------|--------|-------------|-----------|---------|-----------------|---------|"
+        "\n## 2. BEAM Optimized Compute Kernels\n",
+        "| Kernel ID | Memory (GB) | Time (μs) | GFLOPS | Bandwidth (GB/s) | Backend |",
+        "|-----------|-------------|-----------|---------|-----------------|---------|"
     ])
 
     report.extend(format_kernel_table(optimized_data))
 
     report.extend([
         "\n## 3. Memory Transfer Operations\n",
-        "| Operation | Size | Duration (μs) | Memory (GB) |",
-        "|-----------|------|---------------|-------------|"
+        "| Transfer Direction | Memory (GB) | Duration (μs) |",
+        "|-------------------|-------------|---------------|"
     ])
 
     report.extend(format_memory_operations(optimized_data))
