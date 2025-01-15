@@ -295,6 +295,43 @@ def generate_markdown_report(command, baseline_data, optimized_data, metrics):
         f"| GFLOPS Improvement | {efficiency:.1f}% | Compute efficiency gain |"
     ])
 
+    # Add section for kernel code
+    report.extend([
+        "\n## 5. Kernel Source Code\n"
+    ])
+
+    # Function to extract and format kernel code
+    def format_kernel_code(kernel_data):
+        kernel_sections = []
+        for kernel in kernel_data.get("kernels", []):
+            # Skip memory operations
+            if "copy" in kernel.get('kernel_name', '').lower():
+                continue
+
+            kernel_name = kernel.get('kernel_name', '')
+            code = kernel.get('code')
+            if code:
+                kernel_sections.extend([
+                    f"\n### Kernel: {kernel_name}\n",
+                    "```c",
+                    code,
+                    "```\n"
+                ])
+        return kernel_sections
+
+    # Add kernel code from both baseline and optimized runs
+    report.extend(format_kernel_code(baseline_data))
+    # If the kernels are different in optimized version, add those too
+    optimized_kernels = {k.get('kernel_name'): k for k in optimized_data.get("kernels", [])
+                        if "copy" not in k.get('kernel_name', '').lower()}
+    baseline_kernels = {k.get('kernel_name'): k for k in baseline_data.get("kernels", [])
+                       if "copy" not in k.get('kernel_name', '').lower()}
+
+    # Only add optimized kernels if they're different from baseline
+    if optimized_kernels != baseline_kernels:
+        report.extend(["\n### Optimized Kernels"])
+        report.extend(format_kernel_code(optimized_data))
+
     return "\n".join(report)
 
 def main():
