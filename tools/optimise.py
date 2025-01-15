@@ -5,37 +5,36 @@ import os
 from datetime import datetime
 import sys
 import shlex
+from typing import List, Dict
+import statistics
 
-# Define the example commands to run
-EXAMPLES = [
+# Define the programs to run
+PROGRAMS = [
     "python examples/edge.py --use-test-image"
 ]
 
-def run_tinygrad_example(command, optimization=False, reports_dir=None):
-    """Run a TinyGrad example with or without optimization."""
+def run_tinygrad_program(command: str, optimization: bool = False, reports_dir: str = None, run_index: int = 0) -> str:
+    """Run a TinyGrad program with or without optimization."""
     command_parts = shlex.split(command)
     script_path = command_parts[1]  # After 'python'
     name = os.path.basename(script_path).replace(".py", "")
-    log_file = os.path.join(reports_dir, f"{name}_{'optimized' if optimization else 'baseline'}.log")
+    suffix = 'optimized' if optimization else 'baseline'
+    log_file = os.path.join(reports_dir, f"{name}_{suffix}_run{run_index}.log")
 
     env = os.environ.copy()
     env["DEBUG"] = "4"  # Enable detailed logging
     env["BEAM"] = "111" if optimization else "0"
 
     # Get absolute paths and set up working directory
-    tools_dir = os.path.dirname(os.path.abspath(__file__))  # /path/to/tools
-    project_dir = os.path.dirname(tools_dir)                # /path/to/project
-    original_dir = os.getcwd()  # Save current working directory
+    tools_dir = os.path.dirname(os.path.abspath(__file__))
+    project_dir = os.path.dirname(tools_dir)
+    original_dir = os.getcwd()
 
-    # Change to project directory before running
     os.chdir(project_dir)
 
-    # Set up PYTHONPATH to include the project directory
+    # Set up PYTHONPATH
     current_pythonpath = env.get('PYTHONPATH', '')
-    if current_pythonpath:
-        env['PYTHONPATH'] = f"{project_dir}:{current_pythonpath}"
-    else:
-        env['PYTHONPATH'] = project_dir
+    env['PYTHONPATH'] = f"{project_dir}:{current_pythonpath}" if current_pythonpath else project_dir
 
     try:
         # Check if tinygrad is installed
@@ -46,7 +45,6 @@ def run_tinygrad_example(command, optimization=False, reports_dir=None):
             if not os.path.exists(potential_tinygrad_dir):
                 raise ImportError(f"tinygrad module not found in Python path and not found at {potential_tinygrad_dir}")
 
-        # Replace 'python' with actual Python executable path
         command_parts[0] = sys.executable
 
         with open(log_file, "w") as f:
@@ -59,7 +57,6 @@ def run_tinygrad_example(command, optimization=False, reports_dir=None):
                 check=True
             )
 
-        # Verify the log file has content
         if os.path.getsize(log_file) == 0:
             print(f"Warning: Log file {log_file} is empty!")
         else:
@@ -67,31 +64,19 @@ def run_tinygrad_example(command, optimization=False, reports_dir=None):
 
         return log_file
 
-    except ImportError as e:
-        print(f"Error: {str(e)}")
-        print("Please ensure tinygrad is installed or the repository is properly cloned.")
-        print("You can install tinygrad via:")
-        print("  pip install tinygrad")
-        print("Or clone the repository and ensure you're in the correct directory.")
-        raise
-    except subprocess.CalledProcessError as e:
-        print(f"Error running example: {e.stderr}")
-        raise
     except Exception as e:
-        print(f"Unexpected error: {str(e)}")
+        print(f"Error during execution: {str(e)}")
         raise
     finally:
-        # Always restore the original working directory
         os.chdir(original_dir)
 
-def analyze_log(log_file):
+def analyze_log(log_file: str) -> Dict:
     """Run the analyzer on the log file and return the JSON results."""
     json_file = f"{log_file}.json"
     project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     print(f"\nAnalyzing log file: {log_file}")
 
-    # Ensure we're in the project directory when running the analyzer
     original_dir = os.getcwd()
     try:
         os.chdir(project_dir)
@@ -110,52 +95,63 @@ def analyze_log(log_file):
         with open(json_file) as f:
             return json.load(f)
 
-    except subprocess.CalledProcessError as e:
-        print(f"Error running analyzer: {e.stderr}")
-        raise
-    except FileNotFoundError as e:
-        print(f"File not found error: {str(e)}")
-        raise
-    except json.JSONDecodeError as e:
-        print(f"Error parsing JSON output: {str(e)}")
-        raise
     except Exception as e:
-        print(f"Unexpected error during analysis: {str(e)}")
+        print(f"Error during analysis: {str(e)}")
         raise
     finally:
         os.chdir(original_dir)
 
-def calculate_performance_metrics(baseline_data, optimized_data):
-    """Calculate performance comparison metrics."""
-    baseline_time = baseline_data.get("total_runtime_us", 0)
-    optimized_time = optimized_data.get("total_runtime_us", 0)
+def get_total_runtime(data: Dict) -> float:
+    """Calculate total runtime from all kernels in the analysis data."""
+    return sum(kernel.get("metrics", {}).get("timing_us", 0) for kernel in data.get("kernels", []))
 
-    # Calculate total memory and GFLOPS
-    def sum_kernel_metrics(data, metric):
+def get_best_run(runs: List[Dict]) -> Dict:
+    """Determine the fastest run from multiple executions based on kernel timings."""
+    return min(runs, key=get_total_runtime)
+
+def calculate_performance_metrics(baseline_runs: List[Dict], optimized_runs: List[Dict]) -> Dict:
+    """Calculate performance comparison metrics."""
+    best_baseline = get_best_run(baseline_runs)
+    best_optimized = get_best_run(optimized_runs)
+
+    baseline_time = get_total_runtime(best_baseline)
+    optimized_time = get_total_runtime(best_optimized)
+
+    # Calculate statistics for all runs
+    baseline_times = [get_total_runtime(run) for run in baseline_runs]
+    optimized_times = [get_total_runtime(run) for run in optimized_runs]
+
+    def sum_kernel_metrics(data: Dict, metric: str) -> float:
         return sum(k.get("metrics", {}).get(metric, 0) for k in data.get("kernels", []))
 
-    baseline_memory = sum_kernel_metrics(baseline_data, "memory_GB")
-    optimized_memory = sum_kernel_metrics(optimized_data, "memory_GB")
-    baseline_gflops = sum_kernel_metrics(baseline_data, "gflops")
-    optimized_gflops = sum_kernel_metrics(optimized_data, "gflops")
-
-    speedup = baseline_time / optimized_time if optimized_time > 0 else 0
-    time_reduction = baseline_time - optimized_time
-    improvement_percent = (time_reduction / baseline_time * 100) if baseline_time > 0 else 0
-    memory_impact = f"{optimized_memory:.3f}GB vs {baseline_memory:.3f}GB"
-    gflops_improvement = f"{optimized_gflops:.2f} vs {baseline_gflops:.2f}"
+    baseline_memory = sum_kernel_metrics(best_baseline, "memory_GB")
+    optimized_memory = sum_kernel_metrics(best_optimized, "memory_GB")
+    baseline_gflops = sum_kernel_metrics(best_baseline, "gflops")
+    optimized_gflops = sum_kernel_metrics(best_optimized, "gflops")
 
     return {
-        "speedup": speedup,
-        "time_reduction": time_reduction,
-        "improvement_percent": improvement_percent,
-        "memory_impact": memory_impact,
-        "gflops_comparison": gflops_improvement,
+        "speedup": baseline_time / optimized_time if optimized_time > 0 else 0,
+        "time_reduction": baseline_time - optimized_time,
+        "improvement_percent": (baseline_time - optimized_time) / baseline_time * 100 if baseline_time > 0 else 0,
+        "memory_impact": f"{optimized_memory:.3f}GB vs {baseline_memory:.3f}GB",
+        "gflops_comparison": f"{optimized_gflops:.2f} vs {baseline_gflops:.2f}",
         "total_gflops_optimized": optimized_gflops,
-        "total_gflops_baseline": baseline_gflops
+        "total_gflops_baseline": baseline_gflops,
+        "baseline_stats": {
+            "mean": statistics.mean(baseline_times),
+            "std": statistics.stdev(baseline_times) if len(baseline_times) > 1 else 0,
+            "min": min(baseline_times),
+            "max": max(baseline_times)
+        },
+        "optimized_stats": {
+            "mean": statistics.mean(optimized_times),
+            "std": statistics.stdev(optimized_times) if len(optimized_times) > 1 else 0,
+            "min": min(optimized_times),
+            "max": max(optimized_times)
+        }
     }
 
-def format_kernel_table(kernel_data):
+def format_kernel_table(kernel_data: Dict) -> List[str]:
     """Format kernel data into markdown table rows."""
     rows = []
     total_time_us = 0
@@ -186,7 +182,7 @@ def format_kernel_table(kernel_data):
     rows.append(f"| **Total Time** | | | {total_time_ms:.2f} ms | | | |")
     return rows
 
-def format_memory_operations(data):
+def format_memory_operations(data: Dict) -> List[str]:
     """Format memory operations into markdown table rows."""
     rows = []
     memory_kernels = [k for k in data.get("kernels", [])
@@ -207,69 +203,35 @@ def format_memory_operations(data):
     # Add total for memory operations
     total_time = sum(float(k.get("metrics", {}).get("timing_us", 0)) for k in memory_kernels)
     total_memory = sum(float(k.get("metrics", {}).get("memory_GB", 0)) for k in memory_kernels)
-    total_memory = sum(float(k.get("metrics", {}).get("memory_GB", 0)) for k in memory_kernels)
     rows.append(f"| **Total** | {total_memory:.3f} | {total_time:.2f} |")
     return rows
 
-def generate_markdown_report(command, baseline_data, optimized_data, metrics):
+def generate_markdown_report(command: str, baseline_runs: List[Dict], optimized_runs: List[Dict],
+                           metrics: Dict) -> str:
     """Generate the markdown report comparing both runs."""
+    best_baseline = get_best_run(baseline_runs)
+    best_optimized = get_best_run(optimized_runs)
+
     command_parts = command.split()
     example_name = os.path.basename(command_parts[1])
 
     report = [
         f"# Kernel Optimisation Report - {example_name}\n",
         f"Program: `{command}`\n",
-        "## 1. Non-Optimized Compute Kernels\n",
-        "| Kernel ID | Memory (GB) | Time (μs) | GFLOPS | Bandwidth (GB/s) | Backend |",
-        "|-----------|-------------|-----------|---------|-----------------|---------|"
+        "\n## 1. Non-Optimized Compute Kernels\n",
+        "| Kernel | Shape | Memory (GB) | Time (μs) | GFLOPS | Bandwidth (GB/s) | Backend |",
+        "|---------|-------|-------------|------------|---------|-----------------|----------|"
     ]
 
-    # Modified format_kernel_table function inline
-    def format_kernel_table(kernel_data):
-        rows = []
-        total_time_us = 0
-        total_memory = 0
-        total_gflops = 0
-        total_bandwidth = 0
-
-        for kernel in kernel_data.get("kernels", []):
-            if "copy" in kernel.get('kernel_name', '').lower():
-                continue
-
-            metrics = kernel.get("metrics", {})
-            kernel_name = kernel.get('kernel_name', '')
-            timing_us = metrics.get('timing_us', 0)
-            memory_gb = metrics.get('memory_GB', 0)
-            gflops = metrics.get('gflops', 0)
-            bandwidth = metrics.get('bandwidth', 0) or 0
-
-            total_time_us += timing_us
-            total_memory += memory_gb
-            total_gflops += gflops
-            total_bandwidth += bandwidth
-
-            # Use shape as the Kernel ID
-            if "_" in kernel_name and not kernel_name.startswith("copy"):
-                shape = kernel_name
-                rows.append(f"| {shape} | "
-                       f"{memory_gb:.3f} | {timing_us:.2f} | "
-                       f"{gflops:.2f} | {bandwidth:.2f} | "
-                       f"{kernel.get('backend', '')} |")
-
-        # Add totals row with all columns
-        total_time_ms = total_time_us / 1000.0
-        rows.append(f"| **Total** | {total_memory:.3f} | {total_time_us:.2f} | {total_gflops:.2f} | {total_bandwidth:.2f} | |")
-        return rows
-
-    report.extend(format_kernel_table(baseline_data))
+    report.extend(format_kernel_table(best_baseline))
 
     report.extend([
         "\n## 2. BEAM Optimized Compute Kernels\n",
-        "| Kernel ID | Memory (GB) | Time (μs) | GFLOPS | Bandwidth (GB/s) | Backend |",
-        "|-----------|-------------|-----------|---------|-----------------|---------|"
+        "| Kernel | Shape | Memory (GB) | Time (μs) | GFLOPS | Bandwidth (GB/s) | Backend |",
+        "|---------|-------|-------------|------------|---------|-----------------|----------|"
     ])
 
-    report.extend(format_kernel_table(optimized_data))
+    report.extend(format_kernel_table(best_optimized))
 
     report.extend([
         "\n## 3. Memory Transfer Operations\n",
@@ -277,7 +239,7 @@ def generate_markdown_report(command, baseline_data, optimized_data, metrics):
         "|-------------------|-------------|---------------|"
     ])
 
-    report.extend(format_memory_operations(optimized_data))
+    report.extend(format_memory_operations(best_optimized))
 
     # Calculate additional metrics
     efficiency = (metrics['total_gflops_optimized'] / metrics['total_gflops_baseline'] - 1) * 100
@@ -292,7 +254,14 @@ def generate_markdown_report(command, baseline_data, optimized_data, metrics):
         f"| Improvement | {metrics['improvement_percent']:.1f}% | Reduction in execution time |",
         f"| Memory Impact | {metrics['memory_impact']} | Memory footprint comparison |",
         f"| GFLOPS | {metrics['gflops_comparison']} | Computational throughput |",
-        f"| GFLOPS Improvement | {efficiency:.1f}% | Compute efficiency gain |"
+        f"| GFLOPS Improvement | {efficiency:.1f}% | Compute efficiency gain |",
+        "\n## Execution Statistics\n",
+        "| Metric | Baseline | Optimized |",
+        "|--------|----------|-----------|",
+        f"| Best Runtime (μs) | {metrics['baseline_stats']['min']:.2f} | {metrics['optimized_stats']['min']:.2f} |",
+        f"| Mean Runtime (μs) | {metrics['baseline_stats']['mean']:.2f} | {metrics['optimized_stats']['mean']:.2f} |",
+        f"| Std Dev (μs) | {metrics['baseline_stats']['std']:.2f} | {metrics['optimized_stats']['std']:.2f} |",
+        f"| Worst Runtime (μs) | {metrics['baseline_stats']['max']:.2f} | {metrics['optimized_stats']['max']:.2f} |",
     ])
 
     # Add section for kernel code
@@ -301,7 +270,7 @@ def generate_markdown_report(command, baseline_data, optimized_data, metrics):
     ])
 
     # Function to extract and format kernel code
-    def format_kernel_code(kernel_data):
+    def format_kernel_code(kernel_data: Dict) -> List[str]:
         kernel_sections = []
         for kernel in kernel_data.get("kernels", []):
             # Skip memory operations
@@ -320,51 +289,64 @@ def generate_markdown_report(command, baseline_data, optimized_data, metrics):
         return kernel_sections
 
     # Add kernel code from both baseline and optimized runs
-    report.extend(format_kernel_code(baseline_data))
+    report.extend(format_kernel_code(best_baseline))
     # If the kernels are different in optimized version, add those too
-    optimized_kernels = {k.get('kernel_name'): k for k in optimized_data.get("kernels", [])
+    optimized_kernels = {k.get('kernel_name'): k for k in best_optimized.get("kernels", [])
                         if "copy" not in k.get('kernel_name', '').lower()}
-    baseline_kernels = {k.get('kernel_name'): k for k in baseline_data.get("kernels", [])
+    baseline_kernels = {k.get('kernel_name'): k for k in best_baseline.get("kernels", [])
                        if "copy" not in k.get('kernel_name', '').lower()}
 
     # Only add optimized kernels if they're different from baseline
     if optimized_kernels != baseline_kernels:
         report.extend(["\n### Optimized Kernels"])
-        report.extend(format_kernel_code(optimized_data))
+        report.extend(format_kernel_code(best_optimized))
 
     return "\n".join(report)
 
 def main():
-    """Main function to run the analysis and generate reports for all examples."""
+    """Main function to run the analysis with multiple iterations."""
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     reports_dir = f"performance_reports_{timestamp}"
     os.makedirs(reports_dir, exist_ok=True)
 
-    for command in EXAMPLES:
+    NUM_RUNS = 10  # Number of runs for each phase
+
+    for command in PROGRAMS:
         print(f"\nAnalyzing {command}...")
 
-        # Run baseline
-        baseline_log = run_tinygrad_example(command, optimization=False, reports_dir=reports_dir)
-        baseline_data = analyze_log(baseline_log)
+        # Phase 1: Run unoptimized program 10 times
+        baseline_runs = []
+        print("\nPhase 1: Running baseline tests...")
+        for i in range(NUM_RUNS):
+            print(f"Baseline run {i+1}/{NUM_RUNS}")
+            baseline_log = run_tinygrad_program(command, optimization=False, reports_dir=reports_dir, run_index=i)
+            baseline_runs.append(analyze_log(baseline_log))
 
-        # Run optimized
-        optimized_log = run_tinygrad_example(command, optimization=True, reports_dir=reports_dir)
-        optimized_data = analyze_log(optimized_log)
+        # Phase 2: Run optimization step once
+        print("\nPhase 2: Running optimization step...")
+        optimization_log = run_tinygrad_program(command, optimization=True, reports_dir=reports_dir, run_index="opt")
+        _ = analyze_log(optimization_log)  # We analyze but don't need to store the result  # We don't need to store this result
 
-        # Calculate performance metrics
-        metrics = calculate_performance_metrics(baseline_data, optimized_data)
+        # Phase 3: Run optimized version 10 times
+        optimized_runs = []
+        print("\nPhase 3: Running optimized tests...")
+        for i in range(NUM_RUNS):
+            print(f"Optimized run {i+1}/{NUM_RUNS}")
+            optimized_log = run_tinygrad_program(command, optimization=True, reports_dir=reports_dir, run_index=i)
+            optimized_runs.append(analyze_log(optimized_log))
+
+        # Calculate metrics using all runs
+        metrics = calculate_performance_metrics(baseline_runs, optimized_runs)
 
         # Generate and save report
-        report = generate_markdown_report(command, baseline_data, optimized_data, metrics)
+        report = generate_markdown_report(command, baseline_runs, optimized_runs, metrics)
         example_name = os.path.basename(command.split()[1]).replace(".py", "")
         report_file = os.path.join(reports_dir, f"{example_name}_analysis.md")
 
         with open(report_file, "w") as f:
             f.write(report)
 
-        print(f"Report saved to {report_file}")
-
-        # Don't cleanup files anymore - keep them in the reports directory for reference
+        print(f"\nReport saved to {report_file}")
         print(f"All files saved in: {reports_dir}")
 
 if __name__ == "__main__":
