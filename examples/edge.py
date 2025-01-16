@@ -74,7 +74,7 @@ class OptimizedCannyEdgeDetector:
         return blurred
 
     def compute_gradients(self, image: Tensor):
-        """Compute gradients using merged Sobel operator"""
+        """Compute gradients with optimized direction binning and squared magnitude"""
         # Ensure proper input shape
         if len(image.shape) == 2:
             image = image.reshape(1, 1, *image.shape)
@@ -92,23 +92,24 @@ class OptimizedCannyEdgeDetector:
         grad_x = grad_x[0]
         grad_y = grad_y[0]
 
-        # Compute magnitude and direction
-        magnitude = (grad_x ** 2 + grad_y ** 2).sqrt()
-        direction = grad_y.div(grad_x + 1e-10)  # Adding epsilon to avoid division by zero
+        # Compute squared magnitude (skip sqrt)
+        magnitude_squared = grad_x ** 2 + grad_y ** 2
 
-        return magnitude, direction
+        # Direction binning
+        abs_grad_x = grad_x.abs()
+        abs_grad_y = grad_y.abs()
+
+        is_vertical = (abs_grad_y >= abs_grad_x).float()
+        grad_x_sign = (grad_x >= 0).float()
+        grad_y_sign = (grad_y >= 0).float()
+        sign_match = (grad_x_sign == grad_y_sign).float()
+
+        direction = is_vertical + (sign_match * is_vertical + (1 - sign_match) * (1 - is_vertical))
+
+        return magnitude_squared, direction
 
     def non_maximum_suppression(self, magnitude: Tensor, direction: Tensor) -> Tensor:
-        """Apply non-maximum suppression using available tinygrad operations"""
-        # Normalize the direction vector components using direction (dy/dx)
-        norm = (direction * direction + 1).sqrt()  # sqrt(dx^2 + dy^2) where dx=1
-        dx = (1 / norm)  # normalized dx
-        dy = (direction / norm)  # normalized dy
-
-        # Bin the directions into 4 categories based on dx and dy components
-        direction_id = ((dy >= dx) * 1 +
-                       (dy >= -dx) * 2)  # This gives us 4 direction bins
-
+        """Apply non-maximum suppression using simplified direction bins"""
         # Pad magnitude for neighbor operations
         padded = magnitude.pad(((1,1), (1,1)))
         h, w = magnitude.shape
@@ -124,10 +125,11 @@ class OptimizedCannyEdgeDetector:
         n_bottomright = padded[2:h+2, 2:w+2]
 
         # Create masks for each direction
-        d0 = (direction_id == 0).float()  # Horizontal
-        d1 = (direction_id == 1).float()  # 45 degrees
-        d2 = (direction_id == 2).float()  # Vertical
-        d3 = (direction_id == 3).float()  # 135 degrees
+        # Direction is already binned in compute_gradients
+        d0 = (direction == 0).float()  # Horizontal
+        d1 = (direction == 1).float()  # 45 degrees
+        d2 = (direction == 2).float()  # Vertical
+        d3 = (direction == 3).float()  # 135 degrees
 
         # Compare with neighbors based on direction
         suppress0 = (magnitude >= n_left) * (magnitude >= n_right)
@@ -145,52 +147,54 @@ class OptimizedCannyEdgeDetector:
 
         return result
 
+    def hysteresis(self, suppressed: Tensor, low_thresh: float, high_thresh: float) -> Tensor:
+        """Optimized hysteresis thresholding with minimal intermediate operations.
+
+        Args:
+            suppressed: Non-maximum suppressed gradient magnitudes
+            low_thresh: Lower threshold for weak edges
+            high_thresh: Higher threshold for strong edges
+        """
+        # Compute strong and weak masks in one pass using min/max
+        # This avoids multiple comparisons and intermediate tensors
+        edges = suppressed.clip(0, 1)  # Normalize to [0,1] range
+        strong = (edges >= high_thresh).float()
+        weak = ((edges >= low_thresh) * (edges < high_thresh)).float()
+
+        # Setup single convolution for neighbor check
+        neighbor_check = Conv2d(1, 1, 3, padding=1, bias=False)
+        neighbor_check.weight = Tensor(np.ones((1, 1, 3, 3), dtype=np.float32))
+
+        # Single-pass edge linking
+        return (strong + (weak * (neighbor_check(strong.reshape(1, 1, *strong.shape))[0, 0] > 0).float())).clip(0, 1)
+
     def detect_edges(self, image: Tensor, dump_dir: Optional[str] = None) -> Tensor:
-        """Canny edge detection with optional intermediate result dumping"""
-        # Fixed thresholds
-        low_threshold = 0.1
-        high_threshold = 0.3
+        """Canny edge detection with standard hysteresis"""
+        # Square the thresholds since we're using squared magnitudes
+        low_threshold_squared = 0.1 ** 2  # 0.01
+        high_threshold_squared = 0.3 ** 2  # 0.09
 
         # 1. Gaussian smoothing
         smoothed = self.gaussian_blur(image)
         if dump_dir:
             save_image(smoothed.numpy(), os.path.join(dump_dir, '1_gaussian_blur.png'))
 
-        # 2. Compute gradients using merged Sobel
-        magnitude, direction = self.compute_gradients(smoothed)
+        # 2. Compute gradients
+        magnitude_squared, direction = self.compute_gradients(smoothed)
         if dump_dir:
-            save_image(magnitude.numpy(), os.path.join(dump_dir, '2_gradient_magnitude.png'))
+            # Take sqrt for visualization only
+            save_image(magnitude_squared.sqrt().numpy(), os.path.join(dump_dir, '2_gradient_magnitude.png'))
 
-        # 3. Non-maximum suppression
-        suppressed = self.non_maximum_suppression(magnitude, direction)
+        # 3. Non-maximum suppression (works with squared magnitudes)
+        suppressed = self.non_maximum_suppression(magnitude_squared, direction)
         if dump_dir:
-            save_image(suppressed.numpy(), os.path.join(dump_dir, '3_nonmax_suppression.png'))
+            save_image(suppressed.sqrt().numpy(), os.path.join(dump_dir, '3_nonmax_suppression.png'))
 
-        # 4. Double thresholding
-        high_mask = (suppressed > high_threshold).float()
-        low_mask = (suppressed > low_threshold).float()
+        # 4. Standard hysteresis thresholding
+        final_edges = self.hysteresis(suppressed, low_threshold_squared, high_threshold_squared)
+
         if dump_dir:
-            save_image(high_mask.numpy(), os.path.join(dump_dir, '4a_high_threshold.png'))
-            save_image(low_mask.numpy(), os.path.join(dump_dir, '4b_low_threshold.png'))
-
-        # 5. Edge tracking by hysteresis
-        weak_edges = (low_mask - high_mask).relu()
-        if dump_dir:
-            save_image(weak_edges.numpy(), os.path.join(dump_dir, '5a_weak_edges.png'))
-
-        # Setup convolution for checking neighbors
-        edges_4d = high_mask.reshape(1, 1, *high_mask.shape)
-        neighbor_kernel = Tensor(np.ones((1, 1, 3, 3), dtype=np.float32))
-        neighbor_check = Conv2d(1, 1, 3, padding=1, bias=False)
-        neighbor_check.weight = neighbor_kernel
-
-        # Find weak edges connected to strong edges
-        neighbor_strong = (neighbor_check(edges_4d)[0, 0] > 0).float()
-        if dump_dir:
-            save_image(neighbor_strong.numpy(), os.path.join(dump_dir, '5b_strong_neighbors.png'))
-
-        # Combine strong edges with connected weak edges
-        final_edges = high_mask + (weak_edges * neighbor_strong)
+            save_image(final_edges.numpy(), os.path.join(dump_dir, '4_final_edges.png'))
 
         return final_edges
 
