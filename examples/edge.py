@@ -5,23 +5,27 @@ import numpy as np
 from typing import Optional
 from PIL import Image
 
-class CannyEdgeDetector:
+class OptimizedCannyEdgeDetector:
     def __init__(self, default_blur_sigma: float = 1.0, default_kernel_size: int = 5):
-        # Initialize Sobel filters for gradient computation
-        sobel_x_data = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=np.float32)
-        sobel_y_data = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=np.float32)
+        # Initialize merged Sobel filter for gradient computation
+        # Shape: (2, 1, 3, 3) for X and Y gradients
+        sobel_kernels = np.array([
+            [[-1, 0, 1],  # X gradient
+             [-2, 0, 2],
+             [-1, 0, 1]],
+            [[-1, -2, -1],  # Y gradient
+             [0, 0, 0],
+             [1, 2, 1]]
+        ], dtype=np.float32)
 
         # Store default parameters
         self.default_blur_sigma = default_blur_sigma
         self.default_kernel_size = default_kernel_size
 
-        # Initialize Sobel convolution layers
-        self.sobel_x_conv = Conv2d(1, 1, 3, padding=1, bias=False)
-        self.sobel_y_conv = Conv2d(1, 1, 3, padding=1, bias=False)
-
-        # Set up the weights
-        self.sobel_x_conv.weight = Tensor(sobel_x_data.reshape(1, 1, 3, 3))
-        self.sobel_y_conv.weight = Tensor(sobel_y_data.reshape(1, 1, 3, 3))
+        # Initialize single Sobel convolution layer with 2 output channels
+        self.sobel_conv = Conv2d(1, 2, 3, padding=1, bias=False)
+        # Set up the weights with shape (2, 1, 3, 3)
+        self.sobel_conv.weight = Tensor(sobel_kernels.reshape(2, 1, 3, 3))
 
     def create_gaussian_kernel(self, kernel_size: int, sigma: float) -> Tensor:
         """Create a 2D Gaussian kernel"""
@@ -37,17 +41,8 @@ class CannyEdgeDetector:
 
         return Tensor(gaussian).reshape(1, 1, kernel_size, kernel_size)
 
-    def apply_filter(self, image: Tensor, conv_layer: Conv2d) -> Tensor:
-        """Apply a convolution filter to the image"""
-        if len(image.shape) == 2:
-            image = image.reshape(1, 1, *image.shape)
-        elif len(image.shape) == 3:
-            image = image.reshape(1, *image.shape)
-
-        return conv_layer(image)[0, 0]
-
     def gaussian_blur(self, image: Tensor, kernel_size: Optional[int] = None,
-                       sigma: Optional[float] = None) -> Tensor:
+                     sigma: Optional[float] = None) -> Tensor:
         """Apply Gaussian blur with proper handling of zero sigma"""
         sigma = sigma or self.default_blur_sigma
         print(f"detect_edges: sigma = {sigma}")  # Debug print
@@ -70,33 +65,47 @@ class CannyEdgeDetector:
         gaussian_conv = Conv2d(1, 1, kernel_size, padding=kernel_size//2, bias=False)
         gaussian_conv.weight = gaussian_kernel
 
-        return self.apply_filter(image, gaussian_conv)
+        # Ensure proper input shape
+        if len(image.shape) == 2:
+            image = image.reshape(1, 1, *image.shape)
+        elif len(image.shape) == 3:
+            image = image.reshape(1, *image.shape)
+
+        return gaussian_conv(image)[0, 0]
 
     def compute_gradients(self, image: Tensor):
-        """Compute gradients using Sobel operators"""
-        grad_x = self.apply_filter(image, self.sobel_x_conv)
-        grad_y = self.apply_filter(image, self.sobel_y_conv)
+        """Compute gradients using merged Sobel operator"""
+        # Ensure proper input shape
+        if len(image.shape) == 2:
+            image = image.reshape(1, 1, *image.shape)
+        elif len(image.shape) == 3:
+            image = image.reshape(1, *image.shape)
 
+        # Single convolution returns both gradients
+        gradients = self.sobel_conv(image)
+
+        # Split channels into X and Y gradients
+        grad_x = gradients[:, 0, :, :]  # First channel: X gradient
+        grad_y = gradients[:, 1, :, :]  # Second channel: Y gradient
+
+        # Remove batch dimension
+        grad_x = grad_x[0]
+        grad_y = grad_y[0]
+
+        # Compute magnitude and direction
         magnitude = (grad_x ** 2 + grad_y ** 2).sqrt()
         direction = grad_y.div(grad_x + 1e-10)  # Adding epsilon to avoid division by zero
 
         return magnitude, direction
 
     def non_maximum_suppression(self, magnitude: Tensor, direction: Tensor) -> Tensor:
-        """Apply non-maximum suppression using available tinygrad operations
-
-        Args:
-            magnitude: Gradient magnitude tensor
-            direction: Gradient direction tensor (dy/dx)
-        """
+        """Apply non-maximum suppression using available tinygrad operations"""
         # Normalize the direction vector components using direction (dy/dx)
-        # We can get normalized dx and dy components without using atan
         norm = (direction * direction + 1).sqrt()  # sqrt(dx^2 + dy^2) where dx=1
         dx = (1 / norm)  # normalized dx
         dy = (direction / norm)  # normalized dy
 
         # Bin the directions into 4 categories based on dx and dy components
-        # We can use the sign and relative magnitude of dx and dy
         direction_id = ((dy >= dx) * 1 +
                        (dy >= -dx) * 2)  # This gives us 4 direction bins
 
@@ -137,15 +146,7 @@ class CannyEdgeDetector:
         return result
 
     def detect_edges(self, image: Tensor, dump_dir: Optional[str] = None) -> Tensor:
-        """Canny edge detection with optional intermediate result dumping
-
-        Args:
-            image: Input image tensor
-            dump_dir: Directory to save intermediate results (None to disable)
-
-        Returns:
-            Tensor containing the detected edges
-        """
+        """Canny edge detection with optional intermediate result dumping"""
         # Fixed thresholds
         low_threshold = 0.1
         high_threshold = 0.3
@@ -155,7 +156,7 @@ class CannyEdgeDetector:
         if dump_dir:
             save_image(smoothed.numpy(), os.path.join(dump_dir, '1_gaussian_blur.png'))
 
-        # 2. Compute gradients using Sobel
+        # 2. Compute gradients using merged Sobel
         magnitude, direction = self.compute_gradients(smoothed)
         if dump_dir:
             save_image(magnitude.numpy(), os.path.join(dump_dir, '2_gradient_magnitude.png'))
@@ -208,7 +209,7 @@ if __name__ == "__main__":
     import argparse
     import os
 
-    parser = argparse.ArgumentParser(description='Canny Edge Detection using TinyGrad')
+    parser = argparse.ArgumentParser(description='Optimized Canny Edge Detection using TinyGrad')
     parser.add_argument('--input', '-i', type=str, help='Input image path')
     parser.add_argument('--output-dir', '-o', type=str, default='output',
                        help='Output directory for results')
@@ -217,10 +218,6 @@ if __name__ == "__main__":
     parser.add_argument('--dump', action='store_true',
                        help='Save intermediate processing results')
     args = parser.parse_args()
-
-    blur_sigma = 0.3
-
-    print(f"Command line blur-sigma = {blur_sigma}")
 
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
@@ -240,8 +237,8 @@ if __name__ == "__main__":
     # Convert to Tensor
     image = Tensor(image_array)
 
-    print("Initializing Canny edge detector...")
-    detector = CannyEdgeDetector()
+    print("Initializing optimized Canny edge detector...")
+    detector = OptimizedCannyEdgeDetector()
 
     print("\nDetecting edges...")
     edges = detector.detect_edges(
