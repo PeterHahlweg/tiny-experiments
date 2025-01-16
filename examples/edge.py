@@ -27,25 +27,10 @@ class OptimizedCannyEdgeDetector:
         # Set up the weights with shape (2, 1, 3, 3)
         self.sobel_conv.weight = Tensor(sobel_kernels.reshape(2, 1, 3, 3))
 
-    def create_gaussian_kernel(self, kernel_size: int, sigma: float) -> Tensor:
-        """Create a 2D Gaussian kernel"""
-        if kernel_size % 2 == 0:
-            kernel_size += 1
-
-        center = kernel_size // 2
-        x, y = np.meshgrid(np.linspace(-center, center, kernel_size),
-                          np.linspace(-center, center, kernel_size))
-
-        gaussian = np.exp(-(x**2 + y**2)/(2*sigma**2)).astype(np.float32)
-        gaussian = gaussian / gaussian.sum()
-
-        return Tensor(gaussian).reshape(1, 1, kernel_size, kernel_size)
-
     def gaussian_blur(self, image: Tensor, kernel_size: Optional[int] = None,
                      sigma: Optional[float] = None) -> Tensor:
-        """Apply Gaussian blur with proper handling of zero sigma"""
+        """Apply Gaussian blur using two separate 1D convolutions"""
         sigma = sigma or self.default_blur_sigma
-        print(f"detect_edges: sigma = {sigma}")  # Debug print
 
         # If sigma is very close to 0, return original image
         if abs(sigma) < 1e-4:
@@ -53,7 +38,6 @@ class OptimizedCannyEdgeDetector:
 
         # Calculate appropriate kernel size if not provided
         if kernel_size is None:
-            # Ensure kernel size is at least 3 and odd
             kernel_size = max(3, int(6 * sigma))
             if kernel_size % 2 == 0:
                 kernel_size += 1
@@ -61,9 +45,21 @@ class OptimizedCannyEdgeDetector:
         if kernel_size < 3:
             kernel_size = 3
 
-        gaussian_kernel = self.create_gaussian_kernel(kernel_size, sigma)
-        gaussian_conv = Conv2d(1, 1, kernel_size, padding=kernel_size//2, bias=False)
-        gaussian_conv.weight = gaussian_kernel
+        # Create horizontal kernel (row vector)
+        center = kernel_size // 2
+        x = np.linspace(-center, center, kernel_size)
+        gaussian_h = np.exp(-(x**2)/(2*sigma**2)).astype(np.float32)
+        gaussian_h = gaussian_h / gaussian_h.sum()
+        kernel_h = Tensor(gaussian_h).reshape(1, 1, 1, kernel_size)
+
+        # Create vertical kernel (column vector) - same values, different shape
+        kernel_v = Tensor(gaussian_h).reshape(1, 1, kernel_size, 1)
+
+        # Initialize convolution layers
+        conv_h = Conv2d(1, 1, (1, kernel_size), padding=(0, kernel_size//2), bias=False)
+        conv_v = Conv2d(1, 1, (kernel_size, 1), padding=(kernel_size//2, 0), bias=False)
+        conv_h.weight = kernel_h
+        conv_v.weight = kernel_v
 
         # Ensure proper input shape
         if len(image.shape) == 2:
@@ -71,7 +67,11 @@ class OptimizedCannyEdgeDetector:
         elif len(image.shape) == 3:
             image = image.reshape(1, *image.shape)
 
-        return gaussian_conv(image)[0, 0]
+        # Apply horizontal convolution followed by vertical convolution
+        blurred_h = conv_h(image)
+        blurred = conv_v(blurred_h)[0, 0]
+
+        return blurred
 
     def compute_gradients(self, image: Tensor):
         """Compute gradients using merged Sobel operator"""
