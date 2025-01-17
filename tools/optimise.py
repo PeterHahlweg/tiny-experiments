@@ -13,7 +13,7 @@ PROGRAMS = [
     "python examples/edge.py --use-test-image"
 ]
 
-def run_tinygrad_program(command: str, optimization: bool = False, reports_dir: str = None, run_index: int = 0) -> str:
+def run_tinygrad_program(command: str, optimization: bool = False, reports_dir: str = None, run_index: int = 0, beam_value: str = "0") -> str:
     """Run a TinyGrad program with or without optimization."""
     command_parts = shlex.split(command)
     script_path = command_parts[1]  # After 'python'
@@ -23,7 +23,7 @@ def run_tinygrad_program(command: str, optimization: bool = False, reports_dir: 
 
     env = os.environ.copy()
     env["DEBUG"] = "4"  # Enable detailed logging
-    env["BEAM"] = "111" if optimization else "0"
+    env["BEAM"] = beam_value if optimization else "0"  # Use passed beam_value
 
     # Get absolute paths and set up working directory
     tools_dir = os.path.dirname(os.path.abspath(__file__))
@@ -104,6 +104,20 @@ def analyze_log(log_file: str) -> Dict:
 def get_total_runtime(data: Dict) -> float:
     """Calculate total runtime from all kernels in the analysis data."""
     return sum(kernel.get("metrics", {}).get("timing_us", 0) for kernel in data.get("kernels", []))
+
+def get_total_runtime_with_transfers(data: Dict) -> tuple[float, float, float]:
+    """Calculate total runtime including both compute and memory transfer operations."""
+    compute_time = 0
+    transfer_time = 0
+
+    for kernel in data.get("kernels", []):
+        timing = kernel.get("metrics", {}).get("timing_us", 0)
+        if "copy" in kernel.get("kernel_name", "").lower():
+            transfer_time += timing
+        else:
+            compute_time += timing
+
+    return compute_time, transfer_time, compute_time + transfer_time
 
 def get_best_run(runs: List[Dict]) -> Dict:
     """Determine the fastest run from multiple executions based on kernel timings."""
@@ -207,7 +221,7 @@ def format_memory_operations(data: Dict) -> List[str]:
     return rows
 
 def generate_markdown_report(command: str, baseline_runs: List[Dict], optimized_runs: List[Dict],
-                           metrics: Dict) -> str:
+                           metrics: Dict, beam_value: str) -> str:
     """Generate the markdown report comparing both runs."""
     best_baseline = get_best_run(baseline_runs)
     best_optimized = get_best_run(optimized_runs)
@@ -226,7 +240,7 @@ def generate_markdown_report(command: str, baseline_runs: List[Dict], optimized_
     report.extend(format_kernel_table(best_baseline))
 
     report.extend([
-        "\n## 2. BEAM Optimized Compute Kernels\n",
+        f"\n## 2. Optimized Compute Kernels - BEAM {beam_value}\n",  # Use passed beam_value
         "| Kernel | Shape | Memory (GB) | Time (μs) | GFLOPS | Bandwidth (GB/s) | Backend |",
         "|---------|-------|-------------|------------|---------|-----------------|----------|"
     ])
@@ -245,16 +259,28 @@ def generate_markdown_report(command: str, baseline_runs: List[Dict], optimized_
     efficiency = (metrics['total_gflops_optimized'] / metrics['total_gflops_baseline'] - 1) * 100
     time_reduction_ms = metrics['time_reduction'] / 1000.0  # Convert μs to ms
 
+    # Calculate complete runtimes including transfers
+    baseline_compute, baseline_transfer, baseline_total = get_total_runtime_with_transfers(best_baseline)
+    optimized_compute, optimized_transfer, optimized_total = get_total_runtime_with_transfers(best_optimized)
+
+    # Convert to milliseconds for better readability
+    baseline_total_ms = baseline_total / 1000
+    optimized_total_ms = optimized_total / 1000
+
     report.extend([
         "\n## 4. Performance Analysis\n",
         "| Metric | Value | Notes |",
         "|--------|-------|-------|",
+        f"| Complete Runtime | {optimized_total_ms:.2f}ms | Includes compute ({optimized_compute/1000:.2f}ms) and transfers ({optimized_transfer/1000:.2f}ms) |",
         f"| Speed-up Factor | {metrics['speedup']:.2f}x | Total execution time improvement |",
         f"| Time Reduction | {time_reduction_ms:.2f}ms | Absolute time saved |",
         f"| Improvement | {metrics['improvement_percent']:.1f}% | Reduction in execution time |",
         f"| Memory Impact | {metrics['memory_impact']} | Memory footprint comparison |",
         f"| GFLOPS | {metrics['gflops_comparison']} | Computational throughput |",
         f"| GFLOPS Improvement | {efficiency:.1f}% | Compute efficiency gain |",
+    ])
+
+    report.extend([
         "\n## Execution Statistics\n",
         "| Metric | Baseline | Optimized |",
         "|--------|----------|-----------|",
@@ -310,6 +336,7 @@ def main():
     os.makedirs(reports_dir, exist_ok=True)
 
     NUM_RUNS = 10  # Number of runs for each phase
+    BEAM_VALUE = os.environ.get("BEAM", "3")  # Get BEAM value from environment
 
     for command in PROGRAMS:
         print(f"\nAnalyzing {command}...")
@@ -319,27 +346,27 @@ def main():
         print("\nPhase 1: Running baseline tests...")
         for i in range(NUM_RUNS):
             print(f"Baseline run {i+1}/{NUM_RUNS}")
-            baseline_log = run_tinygrad_program(command, optimization=False, reports_dir=reports_dir, run_index=i)
+            baseline_log = run_tinygrad_program(command, optimization=False, reports_dir=reports_dir, run_index=i, beam_value=BEAM_VALUE)
             baseline_runs.append(analyze_log(baseline_log))
 
         # Phase 2: Run optimization step once
         print("\nPhase 2: Running optimization step...")
-        optimization_log = run_tinygrad_program(command, optimization=True, reports_dir=reports_dir, run_index="opt")
-        _ = analyze_log(optimization_log)  # We analyze but don't need to store the result  # We don't need to store this result
+        optimization_log = run_tinygrad_program(command, optimization=True, reports_dir=reports_dir, run_index="opt", beam_value=BEAM_VALUE)
+        _ = analyze_log(optimization_log)  # We analyze but don't need to store the result
 
         # Phase 3: Run optimized version 10 times
         optimized_runs = []
         print("\nPhase 3: Running optimized tests...")
         for i in range(NUM_RUNS):
             print(f"Optimized run {i+1}/{NUM_RUNS}")
-            optimized_log = run_tinygrad_program(command, optimization=True, reports_dir=reports_dir, run_index=i)
+            optimized_log = run_tinygrad_program(command, optimization=True, reports_dir=reports_dir, run_index=i, beam_value=BEAM_VALUE)
             optimized_runs.append(analyze_log(optimized_log))
 
         # Calculate metrics using all runs
         metrics = calculate_performance_metrics(baseline_runs, optimized_runs)
 
         # Generate and save report
-        report = generate_markdown_report(command, baseline_runs, optimized_runs, metrics)
+        report = generate_markdown_report(command, baseline_runs, optimized_runs, metrics, BEAM_VALUE)  # Pass BEAM_VALUE
         example_name = os.path.basename(command.split()[1]).replace(".py", "")
         report_file = os.path.join(reports_dir, f"{example_name}_analysis.md")
 
