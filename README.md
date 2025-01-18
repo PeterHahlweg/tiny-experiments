@@ -2,6 +2,29 @@
 
 A collection of small experiments to learn and explore [tinygrad](https://docs.tinygrad.org), a simple deep learning framework.
 
+
+## Getting Started
+
+```bash
+# Set up experiments repo
+git clone https://github.com/PeterHahlweg/tiny-experiments.git
+cd tiny-experiments
+
+# Set up virtual env
+uv venv
+source .venv/bin/activate.fish
+
+# Install tinygrad
+cd ~/github/tinygrad/
+set -e PYTHONPATH
+set -x PYTHONPATH ~/github/tinygrad/extra $PYTHONPATH
+uv pip uninstall tinygrad
+uv pip install -e .
+
+# Run test
+python examples/edge.py --use-test-image --output-dir output
+```
+
 ## Current Experiments
 
 ### Canny Edge Detection
@@ -11,42 +34,6 @@ An implementation of the Canny edge detection algorithm using tinygrad tensors a
 - Image processing fundamentals
 - Gradient computations
 
-## Getting Started
-
-1. Install dependencies:
-```bash
-uv venv
-source .venv/bin/activate.fish
-uv pip install -r requirements.txt
-```
-
-2. Run the edge detection:
-```bash
-python examples/edge.py --use-test-image --output-dir output
-```
-
-Or try with your own image:
-```bash
-python examples/edge.py --input your_image.jpg --output-dir output
-```
-
-## Notes
-
-## Install tinygrad in editable mode
-# 1. Go to the directory containing setup.py
-cd ~/github/tinygrad/
-
-# 2. Ensure PYTHONPATH is not set
-set -e PYTHONPATH
-
-# 3. If there's an existing tinygrad install, remove it
-uv pip uninstall tinygrad
-
-# 4. Install in editable mode
-uv pip install -e .
-
-# 5. When using extra from tinygrad, add it to the PYTHONPATH
-set -x PYTHONPATH ~/github/tinygrad/extra $PYTHONPATH
 
 ### Kernel Optimizations
 
