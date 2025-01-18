@@ -32,6 +32,22 @@ python examples/edge.py --input your_image.jpg --output-dir output
 
 ## Notes
 
+## Install tinygrad in editable mode
+# 1. Go to the directory containing setup.py
+cd ~/github/tinygrad/
+
+# 2. Ensure PYTHONPATH is not set
+set -e PYTHONPATH
+
+# 3. If there's an existing tinygrad install, remove it
+uv pip uninstall tinygrad
+
+# 4. Install in editable mode
+uv pip install -e .
+
+# 5. When using extra from tinygrad, add it to the PYTHONPATH
+set -x PYTHONPATH ~/github/tinygrad/extra $PYTHONPATH
+
 ### Kernel Optimizations
 
 The numbers shown under "globals locals reduce upcast unroll" represent different optimization parameters that tinygrad tries during kernel optimization:
