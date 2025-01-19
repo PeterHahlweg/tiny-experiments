@@ -25,9 +25,7 @@ uv pip install -e .
 python examples/edge.py --use-test-image --output-dir output
 ```
 
-## Current Experiments
-
-### Canny Edge Detection
+## Canny Edge Detection Example
 An implementation of the Canny edge detection algorithm using tinygrad tensors and operations. This experiment demonstrates:
 - Basic tensor operations
 - Convolution layers
