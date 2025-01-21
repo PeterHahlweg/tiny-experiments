@@ -314,9 +314,12 @@ def init_metal_device():
 
 def run_kernel_benchmark(num_iterations=1000, tensor_size=4):
     print("\n[BENCH] Creating test tensors...")
-    a = Tensor.rand(tensor_size, device="METAL")
-    print(f"[BENCH] Warmup {i+1}: {result}")
-
+    a = Tensor.rand(tensor_size, requires_grad=False, device="METAL")
+    b = Tensor.rand(tensor_size, requires_grad=False, device="METAL")
+    print("[BENCH] Performing warmup...")
+    result = (a + b).numpy()
+    print(f"[BENCH] Warmup complete: {result}")
+    print(f"[BENCH] Starting benchmark with {num_iterations} iterations...")
     start_time = time.time()
     for i in range(num_iterations):
         if i % 100 == 0:
@@ -350,29 +353,21 @@ if __name__ == "__main__":
             print(f"Mean execution time: {mean_time:.3f} ms")
         else:
             print("\nRunning basic operations test...")
-
-            # Create tensors with specific values for verification
-            print("Creating test tensors...")
             a = Tensor([1.0, 2.0, 3.0, 4.0], requires_grad=False, device="METAL")
             b = Tensor([0.5, 1.0, 1.5, 2.0], requires_grad=False, device="METAL")
 
-            print("Performing operations...")
             # Force realization and synchronization after each operation
             add_op = a + b
             add_result = add_op.numpy()
-            print("Add completed")
 
             mul_op = a * b
             mul_result = mul_op.numpy()
-            print("Multiply completed")
 
             sub_op = a - b
             sub_result = sub_op.numpy()
-            print("Subtract completed")
 
             div_op = a / b
             div_result = div_op.numpy()
-            print("Divide completed")
 
             # Expected results
             expected_add = [1.5, 3.0, 4.5, 6.0]
