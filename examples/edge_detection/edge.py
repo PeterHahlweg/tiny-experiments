@@ -4,6 +4,7 @@ from tinygrad.nn import Conv2d
 import numpy as np
 from typing import Optional
 from PIL import Image
+from ops_analyser import OpsAnalyser
 
 class OptimizedCannyEdgeDetector:
     def __init__(self, default_blur_sigma: float = 1.0, default_kernel_size: int = 5):
@@ -223,6 +224,8 @@ if __name__ == "__main__":
                        help='Save intermediate processing results')
     args = parser.parse_args()
 
+    analyser = OpsAnalyser()
+
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -254,3 +257,5 @@ if __name__ == "__main__":
     output_path = os.path.join(args.output_dir, 'canny_edges.png')
     save_image(edges.numpy(), output_path)
     print(f"\nEdge detection result saved to: {output_path}")
+
+    analyser.print_summary()
