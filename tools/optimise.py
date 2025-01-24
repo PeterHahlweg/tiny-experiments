@@ -10,7 +10,7 @@ import statistics
 
 # Define the programs to run
 PROGRAMS = [
-    "python examples/edge.py --use-test-image"
+    "python examples/edge_detection/edge.py --use-test-image"
 ]
 
 def run_tinygrad_program(command: str, optimization: bool = False, reports_dir: str = None, run_index: int = 0, beam_value: str = "0") -> str:
