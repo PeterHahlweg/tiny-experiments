@@ -295,8 +295,9 @@ def main():
         run_tinygrad_program(command, optimization=True, output_dir=output_dir, run_index=0, beam_value=args.beam)
 
         print("\nPhase 3: Running optimized tests...")
-        for i in range(args.num_runs):
-            print(f"Optimized run {i+1}/{args.num_runs}")
+        optimized_runs = []
+        for i in range(1, args.num_runs+1):
+            print(f"Optimized run {i}/{args.num_runs}")
             optimized_result = run_tinygrad_program(command, optimization=True, output_dir=output_dir, run_index=i, beam_value=args.beam)
             optimized_runs.append(optimized_result)
 
