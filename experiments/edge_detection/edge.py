@@ -4,8 +4,8 @@ from tinygrad.nn import Conv2d
 import numpy as np
 from typing import Optional
 from PIL import Image
-from ops_analyser import OpsAnalyser
-from kernel_analyser import KernelAnalyser
+from ops_analyzer import OpsAnalyzer
+from kernel_analyzer import KernelAnalyzer
 
 class OptimizedCannyEdgeDetector:
     def __init__(self, default_blur_sigma: float = 1.0, default_kernel_size: int = 5):
@@ -227,8 +227,8 @@ if __name__ == "__main__":
                        help='Output file for analysis results')
     args = parser.parse_args()
 
-    oanalyser = OpsAnalyser()
-    kanalyser = KernelAnalyser()
+    oanalyzer = OpsAnalyzer()
+    kanalyzer = KernelAnalyzer()
 
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
@@ -262,5 +262,5 @@ if __name__ == "__main__":
     save_image(edges.numpy(), output_path)
     print(f"\nEdge detection result saved to: {output_path}")
 
-    oanalyser.print_summary()
-    kanalyser.write_json(args.analysis_output_file)
+    oanalyzer.print_summary()
+    kanalyzer.write_json(args.analysis_output_file)

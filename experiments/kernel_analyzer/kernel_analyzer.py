@@ -27,7 +27,7 @@ class Kernel:
     src: Optional[str] = None
     uops: Optional[List[Any]] = None
 
-class KernelAnalyser:
+class KernelAnalyzer:
     def __init__(self):
         self.kernels = []
         self._original_run = None
