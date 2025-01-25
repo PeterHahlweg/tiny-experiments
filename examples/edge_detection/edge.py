@@ -5,6 +5,7 @@ import numpy as np
 from typing import Optional
 from PIL import Image
 from ops_analyser import OpsAnalyser
+from kernel_analyser import KernelAnalyser
 
 class OptimizedCannyEdgeDetector:
     def __init__(self, default_blur_sigma: float = 1.0, default_kernel_size: int = 5):
@@ -222,9 +223,12 @@ if __name__ == "__main__":
                        help='Use built-in test image instead of loading from file')
     parser.add_argument('--dump', action='store_true',
                        help='Save intermediate processing results')
+    parser.add_argument('--analysis-output-file', '-a', type=str, default='analysis.json',
+                       help='Output file for analysis results')
     args = parser.parse_args()
 
-    analyser = OpsAnalyser()
+    oanalyser = OpsAnalyser()
+    kanalyser = KernelAnalyser()
 
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
@@ -258,4 +262,5 @@ if __name__ == "__main__":
     save_image(edges.numpy(), output_path)
     print(f"\nEdge detection result saved to: {output_path}")
 
-    analyser.print_summary()
+    oanalyser.print_summary()
+    kanalyser.write_json(args.analysis_output_file)
