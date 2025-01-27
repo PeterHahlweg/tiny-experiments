@@ -18,7 +18,6 @@ class Metrics:
 
 @dataclass
 class Kernel:
-    backend: str
     kernel_index: int
     kernel_name: str
     metrics: Metrics
@@ -84,7 +83,6 @@ class KernelAnalyzer:
             try: code = exec_item.prg._prg.fxn.__str__()
             except Exception: pass
         return Kernel(
-            backend="METAL",
             kernel_index=GlobalCounters.kernel_count,
             kernel_name=name,
             metrics=metrics,
@@ -110,10 +108,9 @@ class KernelAnalyzer:
         output = {
             'total_runtime_us': sum(k.metrics.timing_us for k in self.kernels),
             'kernels': [{
-                'backend': k.backend,
+                'device': k.device,
                 'kernel_index': k.kernel_index,
                 'kernel_name': k.kernel_name,
-                'device': k.device,
                 'src': k.src,
                 'metrics': asdict(k.metrics),
             } for k in self.kernels]

@@ -148,7 +148,7 @@ def format_kernel_table(kernel_data: Dict) -> List[str]:
         rows.append(f"| {kernel_name} | {shape} | "
                    f"{metrics.get('memory_GB', 0):.3f} | {timing_us:.2f} | "
                    f"{metrics.get('gflops', 0):.2f} | {float(metrics.get('bandwidth', 0) or 0):.2f} | "
-                   f"{kernel.get('backend', '')} |")
+                   f"{kernel.get('device', '')} |")
 
     total_time_ms = total_time_us / 1000.0
     rows.append(f"| **Total Time** | | | {total_time_ms:.2f} ms | | | |")
@@ -184,7 +184,7 @@ def generate_markdown_report(command: str, baseline_runs: List[Dict], optimized_
         f"# Kernel Optimisation Report - {example_name}\n",
         f"Program: `{command}`\n",
         "\n## 1. Non-Optimized Compute Kernels\n",
-        "| Kernel | Shape | Memory (GB) | Time (μs) | GFLOPS | Bandwidth (GB/s) | Backend |",
+        "| Kernel | Shape | Memory (GB) | Time (μs) | GFLOPS | Bandwidth (GB/s) | Device |",
         "|---------|-------|-------------|------------|---------|-----------------|----------|"
     ]
 
@@ -192,7 +192,7 @@ def generate_markdown_report(command: str, baseline_runs: List[Dict], optimized_
 
     report.extend([
         f"\n## 2. Optimized Compute Kernels - BEAM {beam_value}\n",
-        "| Kernel | Shape | Memory (GB) | Time (μs) | GFLOPS | Bandwidth (GB/s) | Backend |",
+        "| Kernel | Shape | Memory (GB) | Time (μs) | GFLOPS | Bandwidth (GB/s) | Device |",
         "|---------|-------|-------------|------------|---------|-----------------|----------|"
     ])
 
