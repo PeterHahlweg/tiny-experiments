@@ -9,30 +9,40 @@ from typing import List, Dict
 import statistics
 import argparse
 
-PROGRAMS = [
-    "python examples/edge_detection/edge.py --use-test-image"
-]
-
 def run_tinygrad_program(command: str, optimization: bool = False, output_dir: str = None, run_index: int = 0, beam_value: str = "0") -> Dict:
+    # Split command while preserving quoted strings
     command_parts = shlex.split(command)
+
+    # Get the script path and make it absolute if it's relative
     script_path = command_parts[1]
+    if not os.path.isabs(script_path):
+        script_path = os.path.abspath(script_path)
+
+    # Update command parts with absolute path
+    command_parts[1] = script_path
+
+    # Get the base name for output files
     name = os.path.basename(script_path).replace(".py", "")
 
     env = os.environ.copy()
     env["DEBUG"] = "2"
     env["BEAM"] = beam_value if optimization else "0"
 
-    tools_dir = os.path.dirname(os.path.abspath(__file__))
-    project_dir = os.path.dirname(tools_dir)
+    # Get the project directory from the script location
+    script_dir = os.path.dirname(script_path)
+    project_dir = os.path.dirname(script_dir)
     original_dir = os.getcwd()
 
+    # Create output directory if specified
     if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
         analysis_file = os.path.join(output_dir, f"{name}_{'optimized' if optimization else 'baseline'}_run{run_index}.json")
-        command_parts.extend(["--analysis-output-file", analysis_file])
-        os.makedirs(os.path.dirname(analysis_file), exist_ok=True)
+        command_parts.extend(["--analysis-output-file", os.path.abspath(analysis_file)])
 
     os.chdir(project_dir)
-    env['PYTHONPATH'] = f"{project_dir}:{env.get('PYTHONPATH', '')}"
+    # Add project directory and script directory to Python path
+    script_dir = os.path.dirname(script_path)
+    env['PYTHONPATH'] = f"{script_dir}:{project_dir}:{env.get('PYTHONPATH', '')}"
 
     try:
         import importlib.util
@@ -57,9 +67,15 @@ def run_tinygrad_program(command: str, optimization: bool = False, output_dir: s
             )
 
         if os.path.exists(analysis_file):
-            with open(analysis_file) as f:
-                return json.load(f)
+            try:
+                with open(analysis_file) as f:
+                    data = json.load(f)
+                return data
+            except Exception as e:
+                print(f"Error reading analysis file {analysis_file}: {e}")
+                return {"total_runtime_us": 0, "kernels": []}
         else:
+            print(f"Warning: Analysis file not found at {analysis_file}")
             return {"total_runtime_us": 0, "kernels": []}
 
     except Exception as e:
@@ -88,8 +104,14 @@ def get_best_run(runs: List[Dict]) -> Dict:
     return min(runs, key=get_total_runtime)
 
 def calculate_performance_metrics(baseline_runs: List[Dict], optimized_runs: List[Dict]) -> Dict:
+    if not baseline_runs or not optimized_runs:
+        raise ValueError("No data available for performance comparison")
+
     best_baseline = get_best_run(baseline_runs)
     best_optimized = get_best_run(optimized_runs)
+
+    if not best_baseline or not best_optimized:
+        raise ValueError("Could not find valid baseline or optimized run data")
 
     baseline_time = get_total_runtime(best_baseline)
     optimized_time = get_total_runtime(best_optimized)
@@ -206,7 +228,10 @@ def generate_markdown_report(command: str, baseline_runs: List[Dict], optimized_
 
     report.extend(format_memory_operations(best_optimized))
 
-    efficiency = (metrics['total_gflops_optimized'] / metrics['total_gflops_baseline'] - 1) * 100
+    # Calculate efficiency with safety check for zero baseline
+    efficiency = 0
+    if metrics['total_gflops_baseline'] > 0:
+        efficiency = (metrics['total_gflops_optimized'] / metrics['total_gflops_baseline'] - 1) * 100
     time_reduction_ms = metrics['time_reduction'] / 1000.0
 
     baseline_compute, baseline_transfer, baseline_total = get_total_runtime_with_transfers(best_baseline)
@@ -272,47 +297,49 @@ def generate_markdown_report(command: str, baseline_runs: List[Dict], optimized_
 
 def main():
     parser = argparse.ArgumentParser(description='Run optimization analysis')
+    parser.add_argument('command', help='Command to run and optimize (e.g. "python script.py --arg1 value1")')
     parser.add_argument('--output-dir', default=None, help='Output directory for analysis files')
     parser.add_argument('--num-runs', type=int, default=10, help='Number of runs for each phase')
     parser.add_argument('--beam', default=os.environ.get("BEAM", "3"), help='BEAM value for optimization')
     args = parser.parse_args()
 
+    # Create output directories
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    output_dir = args.output_dir or f"performance_reports_{timestamp}"
+    output_dir = args.output_dir or os.path.abspath(f"performance_reports_{timestamp}")
     os.makedirs(output_dir, exist_ok=True)
+    print(f"Output directory: {output_dir}")
 
-    for command in PROGRAMS:
-        print(f"\nAnalyzing {command}...")
+    print(f"\nAnalyzing {args.command}...")
 
-        baseline_runs = []
-        print("\nPhase 1: Running baseline tests...")
-        for i in range(args.num_runs):
-            print(f"Baseline run {i+1}/{args.num_runs}")
-            baseline_result = run_tinygrad_program(command, optimization=False, output_dir=output_dir, run_index=i, beam_value=args.beam)
-            baseline_runs.append(baseline_result)
+    baseline_runs = []
+    print("\nPhase 1: Running baseline tests...")
+    for i in range(args.num_runs):
+        print(f"Baseline run {i+1}/{args.num_runs}")
+        baseline_result = run_tinygrad_program(args.command, optimization=False, output_dir=output_dir, run_index=i, beam_value=args.beam)
+        baseline_runs.append(baseline_result)
 
-        print("\nPhase 2: Running optimization step...")
-        run_tinygrad_program(command, optimization=True, output_dir=output_dir, run_index=0, beam_value=args.beam)
+    print("\nPhase 2: Running optimization step...")
+    run_tinygrad_program(args.command, optimization=True, output_dir=output_dir, run_index=0, beam_value=args.beam)
 
-        print("\nPhase 3: Running optimized tests...")
-        optimized_runs = []
-        for i in range(1, args.num_runs+1):
-            print(f"Optimized run {i}/{args.num_runs}")
-            optimized_result = run_tinygrad_program(command, optimization=True, output_dir=output_dir, run_index=i, beam_value=args.beam)
-            optimized_runs.append(optimized_result)
+    print("\nPhase 3: Running optimized tests...")
+    optimized_runs = []
+    for i in range(1, args.num_runs+1):
+        print(f"Optimized run {i}/{args.num_runs}")
+        optimized_result = run_tinygrad_program(args.command, optimization=True, output_dir=output_dir, run_index=i, beam_value=args.beam)
+        optimized_runs.append(optimized_result)
 
-        metrics = calculate_performance_metrics(baseline_runs, optimized_runs)
+    metrics = calculate_performance_metrics(baseline_runs, optimized_runs)
 
-        report = generate_markdown_report(command, baseline_runs, optimized_runs, metrics, args.beam)
+    report = generate_markdown_report(args.command, baseline_runs, optimized_runs, metrics, args.beam)
 
-        example_name = os.path.basename(command.split()[1]).replace(".py", "")
-        report_file = os.path.join(output_dir, f"{example_name}_analysis.md")
+    example_name = os.path.basename(args.command.split()[1]).replace(".py", "")
+    report_file = os.path.join(output_dir, f"{example_name}_analysis.md")
 
-        with open(report_file, "w") as f:
-            f.write(report)
+    with open(report_file, "w") as f:
+        f.write(report)
 
-        print(f"\nReport saved to {report_file}")
-        print(f"All files saved in: {output_dir}")
+    print(f"\nReport saved to {report_file}")
+    print(f"All files saved in: {output_dir}")
 
 if __name__ == "__main__":
     main()
