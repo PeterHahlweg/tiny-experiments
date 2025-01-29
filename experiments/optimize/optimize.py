@@ -8,6 +8,7 @@ import shlex
 from typing import List, Dict
 import statistics
 import argparse
+import time
 
 def run_tinygrad_program(command: str, optimization: bool = False, output_dir: str = None, run_index: int = 0, beam_value: str = "0") -> Dict:
     # Split command while preserving quoted strings
@@ -103,7 +104,7 @@ def get_total_runtime_with_transfers(data: Dict) -> tuple[float, float, float]:
 def get_best_run(runs: List[Dict]) -> Dict:
     return min(runs, key=get_total_runtime)
 
-def calculate_performance_metrics(baseline_runs: List[Dict], optimized_runs: List[Dict]) -> Dict:
+def calculate_performance_metrics(baseline_runs: List[Dict], optimized_runs: List[Dict], optimization_time_us: float) -> Dict:
     if not baseline_runs or not optimized_runs:
         raise ValueError("No data available for performance comparison")
 
@@ -146,7 +147,8 @@ def calculate_performance_metrics(baseline_runs: List[Dict], optimized_runs: Lis
             "std": statistics.stdev(optimized_times) if len(optimized_times) > 1 else 0,
             "min": min(optimized_times),
             "max": max(optimized_times)
-        }
+        },
+        "optimization_time_us": optimization_time_us
     }
 
 def format_kernel_table(kernel_data: Dict) -> List[str]:
@@ -261,6 +263,7 @@ def generate_markdown_report(command: str, baseline_runs: List[Dict], optimized_
         f"| Mean Runtime (μs) | {metrics['baseline_stats']['mean']:.2f} | {metrics['optimized_stats']['mean']:.2f} |",
         f"| Std Dev (μs) | {metrics['baseline_stats']['std']:.2f} | {metrics['optimized_stats']['std']:.2f} |",
         f"| Worst Runtime (μs) | {metrics['baseline_stats']['max']:.2f} | {metrics['optimized_stats']['max']:.2f} |",
+f"| Optimization Time (ms) | - | {metrics['optimization_time_us']/1000:.2f} |",
     ])
 
     report.extend(["\n## 5. Kernel Source Code\n"])
@@ -319,7 +322,10 @@ def main():
         baseline_runs.append(baseline_result)
 
     print("\nPhase 2: Running optimization step...")
+    start_time = time.perf_counter()
     run_tinygrad_program(args.command, optimization=True, output_dir=output_dir, run_index=0, beam_value=args.beam)
+    optimization_time = time.perf_counter() - start_time
+    optimization_time_us = optimization_time * 1000000  # Convert to microseconds
 
     print("\nPhase 3: Running optimized tests...")
     optimized_runs = []
@@ -328,7 +334,7 @@ def main():
         optimized_result = run_tinygrad_program(args.command, optimization=True, output_dir=output_dir, run_index=i, beam_value=args.beam)
         optimized_runs.append(optimized_result)
 
-    metrics = calculate_performance_metrics(baseline_runs, optimized_runs)
+        metrics = calculate_performance_metrics(baseline_runs, optimized_runs, optimization_time_us)
 
     report = generate_markdown_report(args.command, baseline_runs, optimized_runs, metrics, args.beam)
 
