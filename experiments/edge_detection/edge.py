@@ -6,6 +6,8 @@ from typing import Optional
 from PIL import Image
 from ops_analyzer import OpsAnalyzer
 from kernel_analyzer import KernelAnalyzer
+from memory_analyzer import MemoryAnalyzer
+# from mcts import mcts_search
 
 class OptimizedCannyEdgeDetector:
     def __init__(self, default_blur_sigma: float = 1.0, default_kernel_size: int = 5):
@@ -229,6 +231,7 @@ if __name__ == "__main__":
 
     oanalyzer = OpsAnalyzer()
     kanalyzer = KernelAnalyzer()
+    manalyzer = MemoryAnalyzer()
 
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
@@ -263,4 +266,5 @@ if __name__ == "__main__":
     print(f"\nEdge detection result saved to: {output_path}")
 
     oanalyzer.print_summary()
+    manalyzer.print_summary()
     kanalyzer.write_json(args.analysis_output_file)
