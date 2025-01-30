@@ -133,12 +133,11 @@ def deep_region_search(best_kernel: Kernel, best_time: float, dev: Device,
             # Print progress line similar to MCTS
             if DEBUG >= 2:
                 et = time.perf_counter() - st
-                improvement = (best_time - current_best[1]) / best_time * 100 if current_best[1] < best_time else 0
                 print(f"\rRS   [{et:7.2f}s] {colored(f'{compile_time*100/et:3.0f}%', 'cyan')} "
                       f"{colored(f'{runtime_time*100/et:3.0f}%', 'red')}: {tm:12.2f} us     "
-                      f"best: {current_best[1]:12.2f} us @ {current_best[2]+1:4d}  "
+                      f"best: {current_best[1]:12.2f} us @ {current_best[2]+1:4d}      "
                       f"{explored:4d}/{total_kernels:4d}  {int(round(explored/et)):4d}/s     "
-                      f"{new_kernel.colored_shape()}\033[K        {improvement:.1f}%", end="")
+                      f"{new_kernel.colored_shape()}\033[K", end="")
 
         except CompileError:
             continue
@@ -293,7 +292,6 @@ def run_mcts(lin: Kernel, rawbufs: List[Buffer], amt: int, dev: Device,
 
 def mcts_search(lin: Kernel, rawbufs: List[Buffer], amt: int) -> Kernel:
     """Two-stage kernel optimization with deep region search"""
-
     # Check cache first
     key = {
         "ast": lin.ast.key,
@@ -328,10 +326,6 @@ def mcts_search(lin: Kernel, rawbufs: List[Buffer], amt: int) -> Kernel:
                 var_vals,
                 seen_asts
             )
-
-            if final_tm < best_tm and DEBUG >= 2:
-                improvement = (best_tm - final_tm) / best_tm * 100
-                print(f"Region search improved performance by {improvement:.1f}%")
 
             best_kernel = final_kernel
 
