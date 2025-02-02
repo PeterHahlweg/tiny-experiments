@@ -1,0 +1,88 @@
+{
+  "device_name": "kiwi_accelerator",
+  "version": "1.0.0",
+  "total_size": 65536,
+  
+  "regions": {
+    "registers": {
+      "base_address": 0,
+      "size": 1024,
+      "registers": {
+        "cmd_head": {
+          "offset": 0,
+          "size": 4,
+          "type": "u32",
+          "access": "rw"
+        },
+        "cmd_tail": {
+          "offset": 4,
+          "size": 4,
+          "type": "u32",
+          "access": "rw"
+        },
+        "resp_head": {
+          "offset": 8,
+          "size": 4,
+          "type": "u32",
+          "access": "rw"
+        },
+        "resp_tail": {
+          "offset": 12,
+          "size": 4,
+          "type": "u32",
+          "access": "rw"
+        },
+        "lock_flags": {
+          "offset": 16,
+          "size": 8,
+          "type": "u32[2]",
+          "access": "rw"
+        },
+        "lock_turn": {
+          "offset": 24,
+          "size": 4,
+          "type": "u32",
+          "access": "rw"
+        }
+      }
+    },
+    "command_ring": {
+      "base_address": 1024,
+      "size": 1024,
+      "type": "ring_buffer",
+      "entry_format": {
+        "length": {
+          "offset": 0,
+          "size": 4,
+          "type": "u32"
+        },
+        "data": {
+          "offset": 4,
+          "size": "variable"
+        }
+      }
+    },
+    "response_ring": {
+      "base_address": 2048,
+      "size": 1024,
+      "type": "ring_buffer",
+      "entry_format": {
+        "length": {
+          "offset": 0,
+          "size": 4,
+          "type": "u32"
+        },
+        "data": {
+          "offset": 4,
+          "size": "variable"
+        }
+      }
+    },
+    "data_buffer": {
+      "base_address": 3072,
+      "size": 62464,
+      "type": "raw",
+      "alignment": 8
+    }
+  }
+}
