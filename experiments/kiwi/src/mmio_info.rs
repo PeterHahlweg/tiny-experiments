@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::{Result, Error, ErrorKind};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MMIOInfo {
     device_name: String,
     version: String,
@@ -10,7 +10,7 @@ pub struct MMIOInfo {
     regions: HashMap<String, Region>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Register {
     pub(crate) offset: usize,
     pub(crate) size: usize,
@@ -27,7 +27,7 @@ impl Register {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Region {
     base: usize,
     size: usize,

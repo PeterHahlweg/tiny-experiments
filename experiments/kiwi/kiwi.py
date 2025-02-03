@@ -3,13 +3,30 @@ import json
 import time
 import struct
 import os
-from typing import Optional, Tuple, Dict
+import signal
+from typing import Optional, Dict
+import threading
 
 class KiwiClient:
     def __init__(self, config_path: str = "mmio_info.json", device_path: str = "/tmp/dev_kiwi", debug: bool = False):
         self.device_path = device_path
-        self.process_id = 1  # We are process 1, device is process 0
+        self.sync_id = 1  # We are 1, device is 0
         self.debug = debug
+       
+        # Read device PID from file
+        try:
+            with open("/tmp/kiwi_device.pid", "r") as f:
+                self.device_pid = int(f.read().strip())
+            if self.debug:
+                print(f"Found device PID: {self.device_pid}")
+        except FileNotFoundError:
+            raise RuntimeError("Device PID file not found. Is the kiwi device running?")
+        except ValueError:
+            raise RuntimeError("Invalid device PID format")
+
+        # Set up response event and signal handler
+        self.response_ready = threading.Event()
+        self.setup_signal_handler()
         
         # Load configuration
         with open(config_path, 'r') as f:
@@ -41,20 +58,39 @@ class KiwiClient:
         self.fd = os.open(device_path, os.O_RDWR)
         self.mmap = mmap.mmap(self.fd, self.total_size, mmap.MAP_SHARED)
 
+        # Write our PID to shared memory so device can signal us
+        our_pid = os.getpid()
+        self.write_register('client_pid', our_pid)
+        if self.debug:
+            print(f"Registered client PID: {our_pid}")
+
     def __del__(self):
+        """Cleanup resources"""
         if hasattr(self, 'mmap'):
             self.mmap.close()
         if hasattr(self, 'fd'):
             os.close(self.fd)
 
+    def setup_signal_handler(self):
+        """Set up signal handler for simulated interrupts"""
+        def signal_handler(signum, frame):
+            if signum == signal.SIGUSR1:
+                if self.debug:
+                    print("Received interrupt signal")
+                self.response_ready.set()
+                
+        signal.signal(signal.SIGUSR1, signal_handler)
+
     def _read_u32(self, offset: int) -> int:
+        """Read a 32-bit value from memory"""
         self.mmap.seek(offset)
         return struct.unpack('<I', self.mmap.read(4))[0]
 
     def _write_u32(self, offset: int, value: int):
+        """Write a 32-bit value to memory"""
         self.mmap.seek(offset)
         self.mmap.write(struct.pack('<I', value))
-        
+
     def read_register(self, name: str, index: int = 0) -> int:
         """Read a register value"""
         if name not in self.registers:
@@ -70,7 +106,7 @@ class KiwiClient:
         if self.debug and name not in ['lock_flags', 'lock_turn', 'resp_head']:  # Don't log polling
             print(f"Read {name}[{index}] = {value}")
         return value
-        
+
     def write_register(self, name: str, value: int, index: int = 0):
         """Write a value to a register"""
         if name not in self.registers:
@@ -88,10 +124,10 @@ class KiwiClient:
 
     def acquire_lock(self):
         """Acquire lock using Peterson's algorithm"""
-        other_process = 1 - self.process_id
+        other_process = 1 - self.sync_id
         
         # Set our flag
-        self.write_register('lock_flags', 1, self.process_id)
+        self.write_register('lock_flags', 1, self.sync_id)
         # Give priority to other process
         self.write_register('lock_turn', other_process)
         
@@ -102,10 +138,10 @@ class KiwiClient:
 
     def release_lock(self):
         """Release the lock"""
-        self.write_register('lock_flags', 0, self.process_id)
+        self.write_register('lock_flags', 0, self.sync_id)
 
     def send_message(self, message: str, timeout_sec: float = 1.0) -> Optional[str]:
-        """Send a message to the device and get its response"""
+        """Send a message to the device and wait for interrupt"""
         msg_bytes = message.encode('utf-8')
         msg_len = len(msg_bytes)
         
@@ -120,6 +156,9 @@ class KiwiClient:
                 print(f"\nSending message: {message!r} ({msg_len} bytes)")
                 
             self.acquire_lock()
+            
+            # Clear response ready flag
+            self.response_ready.clear()
             
             # Check if there's space in command ring
             cmd_head = self.read_register('cmd_head')
@@ -141,43 +180,60 @@ class KiwiClient:
             self.write_register('cmd_tail', new_tail)
             
             if self.debug:
-                print("Waiting for response...")
-                
-            # Wait for and read response
-            start_time = time.time()
-            while time.time() - start_time < timeout_sec:
+                print("Waiting for interrupt...")
+            
+            # Wait for interrupt (signal)
+            if self.response_ready.wait(timeout_sec):
+                if self.debug:
+                    print("Got signal, reading response...")
+                    
+                # Read response head value
                 resp_head = self.read_register('resp_head')
-                if resp_head != 0:  # We have a response
-                    resp_start = resp_region['base']
+                if resp_head > 0:
+                    # Calculate actual response position using modulo
+                    resp_pos = resp_head % resp_region['size']
+                    resp_start = resp_region['base'] + resp_pos
+                    
+                    if self.debug:
+                        print(f"Reading response at offset {resp_pos} (base + {resp_start})")
+                    
                     self.mmap.seek(resp_start)
                     resp_len = struct.unpack('<I', self.mmap.read(4))[0]
+                    
+                    if resp_len > resp_region['size'] - 4:
+                        if self.debug:
+                            print(f"Invalid response length: {resp_len}")
+                        return None
+                        
                     resp_data = self.mmap.read(resp_len)
                     
                     # Reset response head
                     self.write_register('resp_head', 0)
                     
-                    response = resp_data.decode('utf-8')
+                    try:
+                        response = resp_data.decode('utf-8')
+                        if self.debug:
+                            print(f"Got response: {response!r}")
+                        return response
+                    except UnicodeDecodeError:
+                        if self.debug:
+                            print("Invalid UTF-8 in response")
+                        return None
+                else:
                     if self.debug:
-                        print(f"Got response: {response!r}")
-                    return response
-                    
-                time.sleep(0.01)
+                        print("Response head is 0")
+                    return None
+            else:
+                if self.debug:
+                    print("Response timeout")
+                return None
                 
-            if self.debug:
-                print("Response timeout")
-            return None  # Timeout
-            
         finally:
             self.release_lock()
 
 def main():
     # Example usage
     client = KiwiClient(debug=True)
-    
-    # Print register info
-    print("\nRegister configuration:")
-    for name, reg in client.registers.items():
-        print(f"  {name}: offset={reg['offset']}, array_size={reg['array_size']}")
     
     # Send some test messages
     test_messages = [

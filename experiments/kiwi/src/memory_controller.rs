@@ -142,11 +142,4 @@ impl MemoryController {
         self.mmap.flush()
     }
 
-    pub fn get_region(&self, name: &str) -> Option<(usize, usize)> {
-        self.mmio_info.get_region(name)
-    }
-
-    pub fn get_device_info(&self) -> (&str, &str) {
-        self.mmio_info.get_device_info()
-    }
 }
