@@ -1,17 +1,18 @@
 use memmap2::{MmapMut, MmapOptions};
 use std::fs::{OpenOptions, File};
 use std::io::{Write, Result, Error, ErrorKind};
-use crate::mmio_info::{MMIOInfo, Register};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::ptr;
+use crate::mmio_info::MMIOInfo;
 
 pub struct MemoryController {
     _file: File,
     mmap: MmapMut,
-    process_id: u32,
     mmio_info: MMIOInfo,
 }
 
 impl MemoryController {
-    pub fn new(path: &str, mmio_info: MMIOInfo, process_id: u32) -> Result<Self> {
+    pub fn new(path: &str, mmio_info: MMIOInfo) -> Result<Self> {
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -31,75 +32,58 @@ impl MemoryController {
         Ok(Self { 
             _file: file, 
             mmap,
-            process_id,
             mmio_info,
         })
     }
 
-    fn validate_register_access(&self, name: &str, reg: &Register, index: usize, access_size: usize) -> Result<()> {
-        if reg.size != access_size {
-            return Err(Error::new(ErrorKind::InvalidInput, 
-                format!("Register '{}': Invalid access size - tried to access {} bytes from a {}-byte register", 
-                    name, access_size, reg.size)));
+    fn get_atomic_ptr(&self, offset: usize) -> &AtomicU32 {
+        unsafe {
+            let ptr = self.mmap.as_ptr().add(offset) as *const AtomicU32;
+            &*ptr
         }
-        if index >= reg.array_size {
-            return Err(Error::new(ErrorKind::InvalidInput,
-                format!("Register '{}': Invalid array index {} - register array size is {}", 
-                    name, index, reg.array_size)));
-        }
-        Ok(())
     }
 
-    pub fn read_register_array(&self, name: &str, index: usize) -> Result<u32> {
-        let reg = self.mmio_info.get_register(name)
-            .ok_or_else(|| Error::new(ErrorKind::NotFound, 
-                format!("register '{}' not found", name)))?;
-        
-        self.validate_register_access(name, &reg, index, 4)?;
-        let offset = reg.get_element_offset(index)
-            .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "invalid array index"))?;
-            
-        self.read_u32(offset)
-    }
-
-    pub fn write_register_array(&mut self, name: &str, index: usize, value: u32) -> Result<()> {
-        let reg = self.mmio_info.get_register(name)
-            .ok_or_else(|| Error::new(ErrorKind::NotFound, 
-                format!("register '{}' not found", name)))?;
-        
-        self.validate_register_access(name, &reg, index, 4)?;
-        let offset = reg.get_element_offset(index)
-            .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "invalid array index"))?;
-            
-        self.write_u32(offset, value)
+    fn get_atomic_ptr_mut(&mut self, offset: usize) -> &mut AtomicU32 {
+        unsafe {
+            let ptr = self.mmap.as_mut_ptr().add(offset) as *mut AtomicU32;
+            &mut *ptr
+        }
     }
 
     pub fn read_register(&self, name: &str) -> Result<u32> {
-        self.read_register_array(name, 0)
+        let reg = self.mmio_info.get_register(name)
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, 
+                format!("register '{}' not found", name)))?;
+        
+        let atomic = self.get_atomic_ptr(reg.offset);
+        Ok(atomic.load(Ordering::Acquire))
     }
 
     pub fn write_register(&mut self, name: &str, value: u32) -> Result<()> {
-        self.write_register_array(name, 0, value)
-    }
-
-    pub fn acquire_lock(&mut self) -> Result<()> {
-        let other = 1 - self.process_id;
+        let reg = self.mmio_info.get_register(name)
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, 
+                format!("register '{}' not found", name)))?;
         
-        // Write to our lock flag in the array
-        self.write_register_array("lock_flags", self.process_id as usize, 1)?;
-        self.write_register("lock_turn", other)?;
-        
-        // Check other process's flag and turn
-        while self.read_register_array("lock_flags", other as usize)? == 1 
-            && self.read_register("lock_turn")? == other {
-            std::thread::sleep(std::time::Duration::from_micros(1));
-        }
-
+        let atomic = self.get_atomic_ptr_mut(reg.offset);
+        atomic.store(value, Ordering::Release);
         Ok(())
     }
 
-    pub fn release_lock(&mut self) -> Result<()> {
-        self.write_register_array("lock_flags", self.process_id as usize, 0)
+    pub fn ring_doorbell(&mut self) -> Result<()> {
+        let reg = self.mmio_info.get_register("doorbell")
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "doorbell register not found"))?;
+        
+        let atomic = self.get_atomic_ptr_mut(reg.offset);
+        atomic.fetch_add(1, Ordering::Release);
+        Ok(())
+    }
+
+    pub fn check_doorbell(&self) -> Result<u32> {
+        let reg = self.mmio_info.get_register("doorbell")
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "doorbell register not found"))?;
+        
+        let atomic = self.get_atomic_ptr(reg.offset);
+        Ok(atomic.load(Ordering::Acquire))
     }
 
     pub fn read_u32(&self, offset: usize) -> Result<u32> {
@@ -107,9 +91,9 @@ impl MemoryController {
             return Err(Error::new(ErrorKind::InvalidInput, "Invalid offset"));
         }
         
-        let mut buf = [0u8; 4];
-        buf.copy_from_slice(&self.mmap[offset..offset + 4]);
-        Ok(u32::from_le_bytes(buf))
+        Ok(unsafe { 
+            ptr::read_volatile(self.mmap.as_ptr().add(offset) as *const u32)
+        })
     }
 
     pub fn write_u32(&mut self, offset: usize, value: u32) -> Result<()> {
@@ -117,7 +101,12 @@ impl MemoryController {
             return Err(Error::new(ErrorKind::InvalidInput, "Invalid offset"));
         }
         
-        self.mmap[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        unsafe {
+            ptr::write_volatile(
+                self.mmap.as_mut_ptr().add(offset) as *mut u32,
+                value
+            );
+        }
         Ok(())
     }
 
@@ -126,7 +115,15 @@ impl MemoryController {
             return Err(Error::new(ErrorKind::InvalidInput, "Invalid offset or length"));
         }
         
-        Ok(self.mmap[offset..offset + len].to_vec())
+        let mut result = vec![0u8; len];
+        unsafe {
+            ptr::copy_nonoverlapping(
+                self.mmap.as_ptr().add(offset),
+                result.as_mut_ptr(),
+                len
+            );
+        }
+        Ok(result)
     }
 
     pub fn write_bytes(&mut self, offset: usize, data: &[u8]) -> Result<()> {
@@ -134,12 +131,18 @@ impl MemoryController {
             return Err(Error::new(ErrorKind::InvalidInput, "Invalid offset or data size"));
         }
         
-        self.mmap[offset..offset + data.len()].copy_from_slice(data);
+        unsafe {
+            ptr::copy_nonoverlapping(
+                data.as_ptr(),
+                self.mmap.as_mut_ptr().add(offset),
+                data.len()
+            );
+        }
         Ok(())
     }
 
     pub fn sync(&mut self) -> Result<()> {
+        std::sync::atomic::fence(Ordering::SeqCst);
         self.mmap.flush()
     }
-
 }

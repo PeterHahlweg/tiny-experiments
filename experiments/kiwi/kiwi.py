@@ -1,31 +1,35 @@
+from typing import Optional, Dict
 import mmap
 import json
 import time
 import struct
 import os
 import signal
-from typing import Optional, Dict
-import threading
+import ctypes
+
+class AtomicU32(ctypes.Structure):
+    _fields_ = [("value", ctypes.c_uint32)]
 
 class KiwiClient:
     def __init__(self, config_path: str = "mmio_info.json", device_path: str = "/tmp/dev_kiwi", debug: bool = False):
         self.device_path = device_path
-        self.sync_id = 1  # We are 1, device is 0
         self.debug = debug
+        self.response_ready = False
+        self._atomic_refs = []  # Keep track of atomic references
 
         # Read device PID from file
         try:
             with open("/tmp/kiwi_device.pid", "r") as f:
                 self.device_pid = int(f.read().strip())
-            print(f"Device PID: {self.device_pid}")
+            if self.debug:
+                print(f"Device PID: {self.device_pid}")
         except FileNotFoundError:
             raise RuntimeError("Device PID file not found. Is the kiwi device running?")
         except ValueError:
             raise RuntimeError("Invalid device PID format")
 
-        # Set up response event and signal handler
-        self.response_ready = threading.Event()
-        self.setup_signal_handler()
+        # Set up signal handler for interrupts
+        signal.signal(signal.SIGUSR1, self._handle_response)
 
         # Load configuration
         with open(config_path, 'r') as f:
@@ -39,10 +43,9 @@ class KiwiClient:
         for name, region in config['regions'].items():
             if name == 'registers':
                 for reg_name, reg in region.get('registers', {}).items():
-                    array_size = 2 if reg_name == 'lock_flags' else reg.get('array_size', 1)
                     self.registers[reg_name] = {
                         'offset': reg['offset'],
-                        'array_size': array_size
+                        'array_size': reg.get('array_size', 1)
                     }
             else:
                 self.regions[name] = {
@@ -52,92 +55,60 @@ class KiwiClient:
 
         # Open and map the device file
         if not os.path.exists(device_path):
-            raise FileNotFoundError(f"Device file {device_path} not found. Is the kiwi accelerator running?")
+            raise FileNotFoundError(f"Device file {device_path} not found")
 
         self.fd = os.open(device_path, os.O_RDWR)
         self.mmap = mmap.mmap(self.fd, self.total_size, mmap.MAP_SHARED)
 
-        # Write our PID to shared memory so device can signal us
-        our_pid = os.getpid()
-        self.write_register('client_pid', our_pid)
-        print(f"Client PID: {our_pid}")
+        # Map atomic registers
+        self.atomic_regs = {}
+        for name, reg in self.registers.items():
+            offset = reg['offset']
+            atomic = AtomicU32.from_buffer(self.mmap, offset)
+            self.atomic_regs[name] = atomic
+            self._atomic_refs.append(atomic)  # Keep reference
+
+        # Write our PID to shared memory
+        self.write_register('client_pid', os.getpid())
+
+        if self.debug:
+            print("Initialization complete")
 
     def __del__(self):
         """Cleanup resources"""
+        # Clear atomic references first
+        self.atomic_regs.clear()
+        self._atomic_refs.clear()
+        
         if hasattr(self, 'mmap'):
             self.mmap.close()
         if hasattr(self, 'fd'):
             os.close(self.fd)
 
-    def setup_signal_handler(self):
-        """Set up signal handler for simulated interrupts"""
-        def signal_handler(signum, frame):
-            if signum == signal.SIGUSR1:
-                self.response_ready.set()
+    def _handle_response(self, signum, frame):
+        """Signal handler for SIGUSR1"""
+        if signum == signal.SIGUSR1:
+            self.response_ready = True
 
-        signal.signal(signal.SIGUSR1, signal_handler)
-
-    def _read_u32(self, offset: int) -> int:
-        """Read a 32-bit value from memory"""
-        self.mmap.seek(offset)
-        return struct.unpack('<I', self.mmap.read(4))[0]
-
-    def _write_u32(self, offset: int, value: int):
-        """Write a 32-bit value to memory"""
-        self.mmap.seek(offset)
-        self.mmap.write(struct.pack('<I', value))
-
-    def read_register(self, name: str, index: int = 0) -> int:
-        """Read a register value"""
-        if name not in self.registers:
+    def read_register(self, name: str) -> int:
+        """Read a register value atomically"""
+        if name not in self.atomic_regs:
             raise KeyError(f"Register '{name}' not found")
+        return self.atomic_regs[name].value
 
-        reg = self.registers[name]
-        if index >= reg['array_size']:
-            raise IndexError(f"Register '{name}': Invalid array index {index} - register array size is {reg['array_size']}")
-
-        offset = reg['offset'] + (index * 4)
-        value = self._read_u32(offset)
-
-        if self.debug:
-            print(f"Read {name}[{index}] = {value}")
-        return value
-
-    def write_register(self, name: str, value: int, index: int = 0):
-        """Write a value to a register"""
-        if name not in self.registers:
+    def write_register(self, name: str, value: int):
+        """Write a value to a register atomically"""
+        if name not in self.atomic_regs:
             raise KeyError(f"Register '{name}' not found")
+        self.atomic_regs[name].value = value
 
-        reg = self.registers[name]
-        if index >= reg['array_size']:
-            raise IndexError(f"Register '{name}': Invalid array index {index} - register array size is {reg['array_size']}")
-
-        offset = reg['offset'] + (index * 4)
-        self._write_u32(offset, value)
-
-        if self.debug and name not in ['lock_flags', 'lock_turn']:  # Don't log locking
-            print(f"Write {name}[{index}] = {value}")
-
-    def acquire_lock(self):
-        """Acquire lock using Peterson's algorithm"""
-        other_process = 1 - self.sync_id
-
-        # Set our flag
-        self.write_register('lock_flags', 1, self.sync_id)
-        # Give priority to other process
-        self.write_register('lock_turn', other_process)
-
-        # Wait while other process is in critical section and has priority
-        while (self.read_register('lock_flags', other_process) == 1 and
-               self.read_register('lock_turn') == other_process):
-            time.sleep(0.001)
-
-    def release_lock(self):
-        """Release the lock"""
-        self.write_register('lock_flags', 0, self.sync_id)
+    def ring_doorbell(self):
+        """Signal the device that new data is available"""
+        current = self.atomic_regs['doorbell'].value
+        self.atomic_regs['doorbell'].value = current + 1
 
     def send_message(self, message: str, timeout_sec: float = 1.0) -> Optional[str]:
-        """Send a message to the device and wait for interrupt"""
+        """Send a message to the device and wait for response"""
         msg_bytes = message.encode('utf-8')
         msg_len = len(msg_bytes)
 
@@ -148,92 +119,75 @@ class KiwiClient:
             raise ValueError(f"Message too long ({msg_len} bytes)")
 
         try:
-            print(f"Request: {message}")
+            if self.debug:
+                print(f"Request: {message}")
 
-            self.response_ready.clear()
-            self.acquire_lock()
+            # Block signals while we set up the request and wait for response
+            old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGUSR1})
+            try:
+                # Reset response flag
+                self.response_ready = False
+                
+                # Write message to command ring
+                cmd_start = cmd_region['base']
+                self.mmap.seek(cmd_start)
+                self.mmap.write(struct.pack('<I', msg_len))
+                self.mmap.write(msg_bytes)
 
-            # Check if there's space in command ring
-            cmd_head = self.read_register('cmd_head')
-            cmd_tail = self.read_register('cmd_tail')
+                # Ensure writes are visible
+                self.mmap.flush()
 
-            if cmd_head != cmd_tail:
+                # Signal device
+                self.ring_doorbell()
+                
+                # Temporarily unblock signals to receive the response
+                signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGUSR1})
+                
+                # Wait for interrupt signal
+                start_time = time.time()
+                while time.time() - start_time < timeout_sec:
+                    if self.response_ready:
+                        # Block signals while reading response
+                        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGUSR1})
+                        
+                        # Read and return response (only once)
+                        self.mmap.seek(resp_region['base'])
+                        resp_len = struct.unpack('<I', self.mmap.read(4))[0]
+
+                        if resp_len > 0 and resp_len <= resp_region['size'] - 4:
+                            resp_data = self.mmap.read(resp_len)
+                            try:
+                                response = resp_data.decode('utf-8')
+                                if self.debug:
+                                    print(f"Response: {response}")
+                                return response
+                            except UnicodeDecodeError as e:
+                                if self.debug:
+                                    print(f"Unicode decode error: {e}")
+                                return None
+                        
+                        # No need to unblock signals here since we're returning
+                        return None
+                            
+                    time.sleep(0.001)  # Short sleep to prevent busy waiting
+
                 if self.debug:
-                    print("Ring buffer busy (head != tail)")
+                    print(f"Timeout after {timeout_sec}s")
                 return None
 
-            # Write message length and data
-            cmd_start = cmd_region['base'] + (cmd_tail % cmd_region['size'])
-            self.mmap.seek(cmd_start)
-            self.mmap.write(struct.pack('<I', msg_len))
-            self.mmap.write(msg_bytes)
-
-            # Update tail pointer
-            new_tail = (cmd_tail + msg_len + 4) % cmd_region['size']
-            self.write_register('cmd_tail', new_tail)
-            self.release_lock()
-
-            if self.debug:
-                print("Waiting for response... ", end="")
-
-            # Wait for signal with shorter intervals
-            start_time = time.time()
-            while time.time() - start_time < timeout_sec:
-                if self.response_ready.wait(0.01):
-                    if self.debug:
-                        print("received")
-
-                    self.acquire_lock()
-                    try:
-                        resp_head = self.read_register('resp_head')
-                        if resp_head > 0:
-                            # Important: Don't do modulo here, device uses head directly as offset
-                            resp_start = resp_region['base']
-                            self.mmap.seek(resp_start)
-                            resp_len = struct.unpack('<I', self.mmap.read(4))[0]
-
-                            if resp_len > 0 and resp_len <= resp_region['size'] - 4:
-                                resp_data = self.mmap.read(resp_len)
-                                # Reset response head
-                                self.write_register('resp_head', 0)
-                                try:
-                                    response = resp_data.decode('utf-8')
-                                    return response
-                                except UnicodeDecodeError as e:
-                                    if self.debug:
-                                        print(f"Unicode decode error: {e}")
-                                        print(f"Raw response data: {resp_data!r}")
-                                    return None
-                            else:
-                                if self.debug:
-                                    print(f"Invalid response length: {resp_len}")
-                                return None
-                        else:
-                            if self.debug:
-                                print("Response head is 0")
-                            return None
-                    finally:
-                        self.release_lock()
-                else:
-                    if self.debug:
-                        print(f"Still waiting... ({time.time() - start_time:.1f}s elapsed)")
-
-            if self.debug:
-                print(f"Final timeout after {time.time() - start_time:.1f}s")
-            return None
+            finally:
+                # Restore original signal mask
+                signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
 
         except Exception as e:
             if self.debug:
                 print(f"Error in send_message: {e}")
             raise
-        finally:
-            self.release_lock()
 
 def main():
-    # Example usage
-    client = KiwiClient(debug=False)
+    """Example usage"""
+    client = KiwiClient(debug=True)
 
-    # Send some test messages
     test_messages = [
         "Hello, Kiwi!",
         "Testing 1 2 3",
@@ -241,12 +195,10 @@ def main():
     ]
 
     for msg in test_messages:
+        print(f"\nSending: {msg}")
         response = client.send_message(msg)
-        if response:
-            print(f"Response: {response}")
-        else:
-            print("No response (timeout or busy)")
-        time.sleep(0.1)  # Small delay between messages
+        if not response: print("No response (timeout)")
+        time.sleep(0.1)
 
 if __name__ == "__main__":
     main()

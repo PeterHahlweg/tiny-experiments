@@ -12,7 +12,7 @@ fn main() -> Result<()> {
     let config_path = PathBuf::from(std::env::var("MMIO_INFO_PATH").unwrap_or("mmio_info.json".to_string()));
     let mmio_info = MMIOInfo::load(&config_path.to_string_lossy())?;
 
-    let mut mem = MemoryController::new("/tmp/dev_kiwi", mmio_info.clone(), 0)?;
+    let mut mem = MemoryController::new("/tmp/dev_kiwi", mmio_info.clone())?;
 
     // Create PID file for client to find us
     let pid = std::process::id();
@@ -26,43 +26,37 @@ fn main() -> Result<()> {
     let (resp_base, resp_size) = mmio_info.get_region("response_ring")
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "response_ring not found"))?;
 
+    let mut last_doorbell = mem.check_doorbell()?;
+
     loop {
-        mem.acquire_lock()?;
-
-        let cmd_head = mem.read_register("cmd_head")?;
-        let cmd_tail = mem.read_register("cmd_tail")?;
-
-        if cmd_head != cmd_tail {
+        // Check if doorbell has been rung
+        let current_doorbell = mem.check_doorbell()?;
+        if current_doorbell != last_doorbell {
             // Read message length and data from command ring
-            let msg_len = mem.read_u32(cmd_base + cmd_head as usize)?;
-            let msg = mem.read_bytes(cmd_base + cmd_head as usize + 4, msg_len as usize)?;
+            let msg_len = mem.read_u32(cmd_base)?;
+            let msg = mem.read_bytes(cmd_base + 4, msg_len as usize)?;
 
             // Print received message if it's valid UTF-8
             if let Ok(msg_str) = String::from_utf8(msg.clone()) {
                 println!("[DEV] Got: {}", msg_str);
             }
 
-            // Write to response ring, ensuring we don't overflow
-            let resp_head = mem.read_register("resp_head")?;
+            // Write to response ring
             let msg_total_len = (msg_len + 4) as usize;
-
             if msg_total_len <= resp_size {
-                let resp_start = resp_base + (resp_head as usize % resp_size);
+                // Write response
+                mem.write_u32(resp_base, msg_len)?;
+                mem.write_bytes(resp_base + 4, &msg)?;
 
-                mem.write_u32(resp_start, msg_len)?;
-                mem.write_bytes(resp_start + 4, &msg)?;
+                // Update last seen doorbell value
+                last_doorbell = current_doorbell;
 
-                // Update ring buffer pointers
-                mem.write_register("resp_head", (resp_head + msg_total_len as u32) % resp_size as u32)?;
-                mem.write_register("cmd_head", (cmd_head + msg_total_len as u32) % cmd_size as u32)?;
-
+                // Sync memory
                 mem.sync()?;
 
-                // Read client PID from shared memory and send "interrupt" signal
+                // Send SIGUSR1 to client
                 if let Ok(client_pid) = mem.read_register("client_pid") {
                     if client_pid != 0 {
-                        // Send SIGUSR1 to client
-                        // let _ = signal::kill(Pid::from_raw(client_pid as i32), Signal::SIGUSR1);
                         println!("[DEV] Sending SIGUSR1 to client PID: {}", client_pid);
                         match signal::kill(Pid::from_raw(client_pid as i32), Signal::SIGUSR1) {
                             Ok(_) => println!("[DEV] Successfully sent signal to client"),
@@ -73,7 +67,6 @@ fn main() -> Result<()> {
             }
         }
 
-        mem.release_lock()?;
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }
