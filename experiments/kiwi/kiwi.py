@@ -202,6 +202,49 @@ class KiwiClient:
         self.debug and print(f"Timeout after {timeout_sec}s")
         return False
 
+    def write_data(self, offset: int, data: bytes):
+        """Write data to the data region.
+        
+        Args:
+            offset: Offset within the data region
+            data: Bytes to write
+        """
+        data_region = self.regions['data']
+        if offset + len(data) > data_region['size']:
+            raise ValueError(f"Data write exceeds region size (offset: {offset}, size: {len(data)})")
+            
+        abs_offset = data_region['base'] + offset
+        self.mmap.seek(abs_offset)
+        self.mmap.write(data)
+        self.mmap.flush()
+
+    def read_data(self, offset: int, size: int) -> bytes:
+        """Read data from the data region.
+        
+        Args:
+            offset: Offset within the data region
+            size: Number of bytes to read
+            
+        Returns:
+            Bytes read from data region
+        """
+        data_region = self.regions['data']
+        if offset + size > data_region['size']:
+            raise ValueError(f"Data read exceeds region size (offset: {offset}, size: {size})")
+            
+        abs_offset = data_region['base'] + offset
+        self.mmap.seek(abs_offset)
+        return self.mmap.read(size)
+
+    def get_data_region(self) -> Tuple[int, int]:
+        """Get the base address and size of the data region.
+        
+        Returns:
+            Tuple of (base_address, size)
+        """
+        data_region = self.regions['data']
+        return data_region['base'], data_region['size']
+
     def send_message(self, message: str, timeout_sec: float = 1.0) -> Optional[str]:
         """Send a message to the device and wait for response"""
         try:

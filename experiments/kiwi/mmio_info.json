@@ -1,53 +1,33 @@
 {
-    "device_name": "Kiwi Accelerator",
+    "device_name": "Kiwi AI Accelerator",
     "version": "1.0",
-    "total_size": 32768,
+    "total_size": 1073741824,
     "regions": {
         "registers": {
             "base_address": 0,
             "size": 4096,
             "registers": {
-                "doorbell": {
-                    "offset": 0,
-                    "array_size": 1
-                },
-                "status": {
-                    "offset": 4,
-                    "array_size": 1
-                },
-                "control": {
-                    "offset": 8,
-                    "array_size": 1
-                },
-                "cycles_low": {
-                    "offset": 12,
-                    "array_size": 1
-                },
-                "cycles_high": {
-                    "offset": 16,
-                    "array_size": 1
-                },
-                "cmd_head": {
-                    "offset": 20,
-                    "array_size": 1
-                },
-                "cmd_tail": {
-                    "offset": 24,
-                    "array_size": 1
-                },
-                "resp_head": {
-                    "offset": 28,
-                    "array_size": 1
-                }
+                "status": {"offset": 0, "size": 4},
+                "control": {"offset": 4, "size": 4},
+                "doorbell": {"offset": 8, "size": 4},
+                "cycles_low": {"offset": 12, "size": 4},
+                "cycles_high": {"offset": 16, "size": 4},
+                "cmd_head": {"offset": 20, "size": 4},
+                "cmd_tail": {"offset": 24, "size": 4},
+                "resp_head": {"offset": 28, "size": 4}
             }
         },
         "command_ring": {
             "base_address": 4096,
-            "size": 4096
+            "size": 65536
         },
         "response_ring": {
-            "base_address": 8192,
-            "size": 4096
+            "base_address": 69632,
+            "size": 65536
+        },
+        "data": {
+            "base_address": 135168,
+            "size": 1073606656
         }
     }
 }
