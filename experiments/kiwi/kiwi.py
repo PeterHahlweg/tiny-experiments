@@ -5,6 +5,8 @@ class AtomicU32(ctypes.Structure):
     _fields_ = [("value", ctypes.c_uint32)]
 
 class KiwiClient:
+    CLIENT_PID_PATH = "/tmp/kiwi_client.pid"
+    
     def __init__(self, config_path: str = "mmio_info.json", device_path: str = "/tmp/dev_kiwi", debug: bool = False):
         self.debug = debug
         self.response_ready = False
@@ -15,6 +17,10 @@ class KiwiClient:
             self.debug and print(f"Device PID: {self.device_pid}")
         except (FileNotFoundError, ValueError) as e:
             raise RuntimeError("Device PID error. Is kiwi device running?") from e
+
+        # Write client PID to file
+        with open(self.CLIENT_PID_PATH, 'w') as f:
+            f.write(str(os.getpid()))
 
         # Load config and parse regions
         config = json.load(open(config_path))
@@ -38,9 +44,8 @@ class KiwiClient:
             self.atomic_regs[name] = atomic
             self._atomic_refs.append(atomic)
 
-        # Initialize signal handler and write client PID
+        # Initialize signal handler
         signal.signal(signal.SIGUSR1, lambda s, f: setattr(self, 'response_ready', True))
-        self.atomic_regs['client_pid'].value = os.getpid()
         self.debug and print("Initialization complete")
 
     def __del__(self):
@@ -48,6 +53,11 @@ class KiwiClient:
         self._atomic_refs.clear()
         hasattr(self, 'mmap') and self.mmap.close()
         hasattr(self, 'fd') and os.close(self.fd)
+        # Clean up PID file on exit
+        try:
+            os.remove(self.CLIENT_PID_PATH)
+        except OSError:
+            pass
 
     def read_register(self, name: str) -> int:
         if name not in self.atomic_regs:
@@ -127,18 +137,7 @@ class KiwiClient:
             raise
 
     class _interrupt_lock:
-        """Context manager for interrupt handling emulation.
-        
-        In real hardware, drivers use interrupt masking to handle critical sections
-        when reading/writing device memory. Since this is a userspace emulation,
-        we use POSIX signals (SIGUSR1) to simulate hardware interrupts from the device.
-        
-        This class provides interrupt masking semantics similar to spin_lock_irqsave()
-        in real drivers:
-        - block() ~ disable_irq()
-        - unblock() ~ enable_irq()
-        - Context manager ~ spin_lock_irqsave()/spin_unlock_irqrestore()
-        """
+        """Context manager for interrupt handling emulation"""
         def __init__(self):
             self.old_mask = None
             

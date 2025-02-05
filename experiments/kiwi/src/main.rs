@@ -55,14 +55,18 @@ fn main() -> Result<()> {
                 mem.sync()?;
 
                 // Send SIGUSR1 to client
-                if let Ok(client_pid) = mem.read_register("client_pid") {
-                    if client_pid != 0 {
-                        println!("[DEV] Sending SIGUSR1 to client PID: {}", client_pid);
-                        match signal::kill(Pid::from_raw(client_pid as i32), Signal::SIGUSR1) {
-                            Ok(_) => println!("[DEV] Successfully sent signal to client"),
-                            Err(e) => println!("[DEV] Failed to send signal: {}", e)
+                let client_pid_path = "/tmp/kiwi_client.pid";
+                match std::fs::read_to_string(client_pid_path) {
+                    Ok(pid_str) => {
+                        if let Ok(client_pid) = pid_str.trim().parse::<i32>() {
+                            println!("[DEV] Sending SIGUSR1 to client PID: {}", client_pid);
+                            match signal::kill(Pid::from_raw(client_pid), Signal::SIGUSR1) {
+                                Ok(_) => println!("[DEV] Successfully sent signal to client"),
+                                Err(e) => println!("[DEV] Failed to send signal: {}", e)
+                            }
                         }
-                    }
+                    },
+                    Err(e) => println!("[DEV] Failed to read client PID file: {}", e)
                 }
             }
         }

@@ -11,10 +11,6 @@
                     "offset": 0,
                     "array_size": 1
                 },
-                "client_pid": {
-                    "offset": 4,
-                    "array_size": 1
-                },
                 "cmd_head": {
                     "offset": 8,
                     "array_size": 1
