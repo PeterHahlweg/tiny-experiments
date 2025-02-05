@@ -11,16 +11,32 @@
                     "offset": 0,
                     "array_size": 1
                 },
-                "cmd_head": {
+                "status": {
+                    "offset": 4,
+                    "array_size": 1
+                },
+                "control": {
                     "offset": 8,
                     "array_size": 1
                 },
-                "cmd_tail": {
+                "cycles_low": {
                     "offset": 12,
                     "array_size": 1
                 },
-                "resp_head": {
+                "cycles_high": {
                     "offset": 16,
+                    "array_size": 1
+                },
+                "cmd_head": {
+                    "offset": 20,
+                    "array_size": 1
+                },
+                "cmd_tail": {
+                    "offset": 24,
+                    "array_size": 1
+                },
+                "resp_head": {
+                    "offset": 28,
                     "array_size": 1
                 }
             }

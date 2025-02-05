@@ -1,18 +1,25 @@
 from typing import Optional, Dict, Tuple, Callable
 import mmap, json, time, struct, os, signal, ctypes, threading
+from enum import IntFlag, auto
+
+class DeviceStatus(IntFlag):
+    """Hardware status register bits"""
+    DEVICE_READY = 1 << 0        # Device is initialized and ready
+    OPERATION_ACTIVE = 1 << 1    # Device is processing a command
+    ERROR = 1 << 2              # Error condition present
+    RESET_IN_PROGRESS = 1 << 3   # Device is resetting
+
+class DeviceControl(IntFlag):
+    """Hardware control register bits"""
+    RESET = 1 << 0              # Write 1 to trigger reset
 
 class InterruptController:
-    """Hardware interrupt emulation layer.
-    
-    Provides a hardware-like interface for interrupt handling while hiding
-    the POSIX signal implementation details.
-    """
+    """Hardware interrupt emulation layer."""
     def __init__(self):
         self._handlers: Dict[int, Callable] = {}
         self._irq_disabled = threading.Event()
         self._irq_disabled.clear()
         
-        # Set up the underlying signal handler
         def _signal_handler(signum, _):
             if not self._irq_disabled.is_set():
                 irq = self._signal_to_irq(signum)
@@ -22,36 +29,21 @@ class InterruptController:
         signal.signal(signal.SIGUSR1, _signal_handler)
     
     def register_handler(self, irq: int, handler: Callable) -> None:
-        """Register an interrupt handler function for a specific IRQ.
-        
-        Args:
-            irq: Interrupt request number
-            handler: Callback function to handle the interrupt
-        """
         self._handlers[irq] = handler
     
     def unregister_handler(self, irq: int) -> None:
-        """Remove the handler for a specific IRQ."""
         self._handlers.pop(irq, None)
     
     def disable_interrupts(self) -> None:
-        """Disable interrupt handling (like cli instruction)."""
         self._irq_disabled.set()
     
     def enable_interrupts(self) -> None:
-        """Enable interrupt handling (like sti instruction)."""
         self._irq_disabled.clear()
     
     def _signal_to_irq(self, signum: int) -> int:
-        """Map POSIX signals to emulated IRQ numbers."""
-        # For now, we only use SIGUSR1 mapped to IRQ 1
         return 1 if signum == signal.SIGUSR1 else 0
 
     class InterruptLock:
-        """Context manager for temporarily disabling interrupts.
-        
-        Similar to spin_lock_irqsave() in real drivers.
-        """
         def __init__(self, controller: 'InterruptController'):
             self.controller = controller
             
@@ -67,6 +59,7 @@ class AtomicU32(ctypes.Structure):
 
 class KiwiClient:
     CLIENT_PID_PATH = "/tmp/kiwi_client.pid"
+    RESET_TIMEOUT = 1.0  # seconds to wait for reset to complete
     
     def __init__(self, config_path: str = "mmio_info.json", device_path: str = "/tmp/dev_kiwi", debug: bool = False):
         self.debug = debug
@@ -109,6 +102,10 @@ class KiwiClient:
             self.atomic_regs[name] = atomic
             self._atomic_refs.append(atomic)
 
+        # Wait for device to be ready
+        if not self._wait_for_status(DeviceStatus.DEVICE_READY, timeout_sec=1.0):
+            raise RuntimeError("Device not ready after initialization")
+
         self.debug and print("Initialization complete")
 
     def _handle_response_interrupt(self):
@@ -135,6 +132,39 @@ class KiwiClient:
         if name not in self.atomic_regs:
             raise KeyError(f"Register '{name}' not found")
         self.atomic_regs[name].value = value
+
+    def get_status(self) -> DeviceStatus:
+        """Read the device status register."""
+        return DeviceStatus(self.read_register('status'))
+
+    def get_cycles(self) -> int:
+        """Read the 64-bit cycle counter."""
+        high = self.read_register('cycles_high')
+        low = self.read_register('cycles_low')
+        return (high << 32) | low
+
+    def reset_device(self) -> bool:
+        """Reset the device and wait for it to be ready again.
+        
+        Returns:
+            bool: True if reset completed successfully, False if timeout
+        """
+        self.debug and print("Initiating device reset")
+        
+        # Trigger reset
+        self.write_register('control', DeviceControl.RESET)
+        
+        # Wait for reset to complete and device to be ready
+        return self._wait_for_status(DeviceStatus.DEVICE_READY, timeout_sec=self.RESET_TIMEOUT)
+
+    def _wait_for_status(self, status: DeviceStatus, timeout_sec: float) -> bool:
+        """Wait for specific status bits to be set."""
+        start = time.time()
+        while time.time() - start < timeout_sec:
+            if self.get_status() & status:
+                return True
+            time.sleep(0.001)
+        return False
 
     def ring_doorbell(self):
         self.atomic_regs['doorbell'].value += 1
@@ -175,6 +205,15 @@ class KiwiClient:
     def send_message(self, message: str, timeout_sec: float = 1.0) -> Optional[str]:
         """Send a message to the device and wait for response"""
         try:
+            # Check device status first
+            status = self.get_status()
+            if DeviceStatus.ERROR in status:
+                raise RuntimeError("Device in error state")
+            if DeviceStatus.RESET_IN_PROGRESS in status:
+                raise RuntimeError("Device is resetting")
+            if not DeviceStatus.DEVICE_READY in status:
+                raise RuntimeError("Device not ready")
+
             msg_bytes = message.encode('utf-8')
             cmd_region = self.regions['command_ring']
             resp_region = self.regions['response_ring']
@@ -183,6 +222,9 @@ class KiwiClient:
                 raise ValueError(f"Message too long ({len(msg_bytes)} bytes)")
 
             self.debug and print(f"Request: {message}")
+            
+            # Get cycles immediately before operation
+            start_cycles = self.get_cycles()
             
             # Use interrupt lock during device communication
             with self.interrupt_controller.InterruptLock(self.interrupt_controller):
@@ -196,7 +238,16 @@ class KiwiClient:
 
             # Disable interrupts while reading response
             with self.interrupt_controller.InterruptLock(self.interrupt_controller):
-                return self._read_response(resp_region)
+                response = self._read_response(resp_region)
+                
+            # Calculate cycles taken if response received
+            if response is not None:
+                end_cycles = self.get_cycles()
+                cycles_taken = end_cycles - start_cycles
+                if cycles_taken >= 0:  # Only show if positive
+                    self.debug and print(f"Operation took {cycles_taken} cycles")
+            
+            return response
 
         except Exception as e:
             self.debug and print(f"Error in send_message: {e}")
@@ -204,12 +255,34 @@ class KiwiClient:
 
 def main():
     client = KiwiClient(debug=True)
+    
+    # Initial reset and wait for device ready
+    if not client.reset_device():
+        print("Reset failed")
+        return
+        
+    if not client._wait_for_status(DeviceStatus.DEVICE_READY, timeout_sec=1.0):
+        print("Device not ready after reset")
+        return
+        
+    # Get fresh cycle count after reset
+    print(f"Initial status: {client.get_status()}")
+    print(f"Initial cycle count: {client.get_cycles()}")
+    
     messages = ["Hello, Kiwi!", "Testing 1 2 3", "How are you?"]
 
     for msg in messages:
         print(f"\nSending: {msg}")
-        if not client.send_message(msg):
+        response = client.send_message(msg)
+        if response is None:
             print("No response (timeout)")
+        else:
+            status = client.get_status()
+            if DeviceStatus.ERROR in status:
+                print(f"Device error detected: {status}")
+        # Wait for operation to fully complete
+        while DeviceStatus.OPERATION_ACTIVE in client.get_status():
+            time.sleep(0.001)
         time.sleep(0.1)
 
 if __name__ == "__main__":
