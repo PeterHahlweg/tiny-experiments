@@ -1,18 +1,19 @@
 mod mmio_info;
 mod memory_controller;
+mod interrupt_controller;
 
 use mmio_info::MMIOInfo;
 use memory_controller::MemoryController;
+use interrupt_controller::InterruptController;
 use std::io::Result;
 use std::path::PathBuf;
-use nix::sys::signal::{self, Signal};
-use nix::unistd::Pid;
 
 fn main() -> Result<()> {
     let config_path = PathBuf::from(std::env::var("MMIO_INFO_PATH").unwrap_or("mmio_info.json".to_string()));
     let mmio_info = MMIOInfo::load(&config_path.to_string_lossy())?;
 
     let mut mem = MemoryController::new("/tmp/dev_kiwi", mmio_info.clone())?;
+    let interrupt_controller = InterruptController::new("/tmp/kiwi_client.pid");
 
     // Create PID file for client to find us
     let pid = std::process::id();
@@ -51,22 +52,12 @@ fn main() -> Result<()> {
                 // Update last seen doorbell value
                 last_doorbell = current_doorbell;
 
-                // Sync memory
+                // Sync memory before raising interrupt
                 mem.sync()?;
 
-                // Send SIGUSR1 to client
-                let client_pid_path = "/tmp/kiwi_client.pid";
-                match std::fs::read_to_string(client_pid_path) {
-                    Ok(pid_str) => {
-                        if let Ok(client_pid) = pid_str.trim().parse::<i32>() {
-                            println!("[DEV] Sending SIGUSR1 to client PID: {}", client_pid);
-                            match signal::kill(Pid::from_raw(client_pid), Signal::SIGUSR1) {
-                                Ok(_) => println!("[DEV] Successfully sent signal to client"),
-                                Err(e) => println!("[DEV] Failed to send signal: {}", e)
-                            }
-                        }
-                    },
-                    Err(e) => println!("[DEV] Failed to read client PID file: {}", e)
+                // Raise interrupt to notify client
+                if let Err(e) = interrupt_controller.raise_irq(1) {
+                    println!("[DEV] Failed to raise interrupt: {}", e);
                 }
             }
         }

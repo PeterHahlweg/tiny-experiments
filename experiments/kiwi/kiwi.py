@@ -1,5 +1,66 @@
-from typing import Optional, Dict, Tuple
-import mmap, json, time, struct, os, signal, ctypes
+from typing import Optional, Dict, Tuple, Callable
+import mmap, json, time, struct, os, signal, ctypes, threading
+
+class InterruptController:
+    """Hardware interrupt emulation layer.
+    
+    Provides a hardware-like interface for interrupt handling while hiding
+    the POSIX signal implementation details.
+    """
+    def __init__(self):
+        self._handlers: Dict[int, Callable] = {}
+        self._irq_disabled = threading.Event()
+        self._irq_disabled.clear()
+        
+        # Set up the underlying signal handler
+        def _signal_handler(signum, _):
+            if not self._irq_disabled.is_set():
+                irq = self._signal_to_irq(signum)
+                if irq in self._handlers:
+                    self._handlers[irq]()
+                    
+        signal.signal(signal.SIGUSR1, _signal_handler)
+    
+    def register_handler(self, irq: int, handler: Callable) -> None:
+        """Register an interrupt handler function for a specific IRQ.
+        
+        Args:
+            irq: Interrupt request number
+            handler: Callback function to handle the interrupt
+        """
+        self._handlers[irq] = handler
+    
+    def unregister_handler(self, irq: int) -> None:
+        """Remove the handler for a specific IRQ."""
+        self._handlers.pop(irq, None)
+    
+    def disable_interrupts(self) -> None:
+        """Disable interrupt handling (like cli instruction)."""
+        self._irq_disabled.set()
+    
+    def enable_interrupts(self) -> None:
+        """Enable interrupt handling (like sti instruction)."""
+        self._irq_disabled.clear()
+    
+    def _signal_to_irq(self, signum: int) -> int:
+        """Map POSIX signals to emulated IRQ numbers."""
+        # For now, we only use SIGUSR1 mapped to IRQ 1
+        return 1 if signum == signal.SIGUSR1 else 0
+
+    class InterruptLock:
+        """Context manager for temporarily disabling interrupts.
+        
+        Similar to spin_lock_irqsave() in real drivers.
+        """
+        def __init__(self, controller: 'InterruptController'):
+            self.controller = controller
+            
+        def __enter__(self):
+            self.controller.disable_interrupts()
+            return self
+            
+        def __exit__(self, *args):
+            self.controller.enable_interrupts()
 
 class AtomicU32(ctypes.Structure):
     _fields_ = [("value", ctypes.c_uint32)]
@@ -21,6 +82,10 @@ class KiwiClient:
         # Write client PID to file
         with open(self.CLIENT_PID_PATH, 'w') as f:
             f.write(str(os.getpid()))
+
+        # Set up interrupt handling
+        self.interrupt_controller = InterruptController()
+        self.interrupt_controller.register_handler(1, self._handle_response_interrupt)
 
         # Load config and parse regions
         config = json.load(open(config_path))
@@ -44,16 +109,18 @@ class KiwiClient:
             self.atomic_regs[name] = atomic
             self._atomic_refs.append(atomic)
 
-        # Initialize signal handler
-        signal.signal(signal.SIGUSR1, lambda s, f: setattr(self, 'response_ready', True))
         self.debug and print("Initialization complete")
 
+    def _handle_response_interrupt(self):
+        """Handler for response ready interrupt"""
+        self.response_ready = True
+
     def __del__(self):
+        self.interrupt_controller.unregister_handler(1)
         self.atomic_regs.clear()
         self._atomic_refs.clear()
         hasattr(self, 'mmap') and self.mmap.close()
         hasattr(self, 'fd') and os.close(self.fd)
-        # Clean up PID file on exit
         try:
             os.remove(self.CLIENT_PID_PATH)
         except OSError:
@@ -117,42 +184,23 @@ class KiwiClient:
 
             self.debug and print(f"Request: {message}")
             
-            # Lock interrupts during device communication
-            with self._interrupt_lock() as irq:
+            # Use interrupt lock during device communication
+            with self.interrupt_controller.InterruptLock(self.interrupt_controller):
                 self.response_ready = False
                 self._write_command(cmd_region, msg_bytes)
                 self.ring_doorbell()
                 
-                # Temporarily unblock to receive response
-                irq.unblock()  # Enable interrupts to receive device response
-                if not self._wait_for_response(timeout_sec):
-                    return None
+            # Wait for response interrupt
+            if not self._wait_for_response(timeout_sec):
+                return None
 
-                # Disable interrupts while reading device memory
-                irq.block()
+            # Disable interrupts while reading response
+            with self.interrupt_controller.InterruptLock(self.interrupt_controller):
                 return self._read_response(resp_region)
 
         except Exception as e:
             self.debug and print(f"Error in send_message: {e}")
             raise
-
-    class _interrupt_lock:
-        """Context manager for interrupt handling emulation"""
-        def __init__(self):
-            self.old_mask = None
-            
-        def __enter__(self):
-            self.old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGUSR1})
-            return self
-            
-        def block(self):
-            signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGUSR1})
-            
-        def unblock(self):
-            signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGUSR1})
-            
-        def __exit__(self, *args):
-            signal.pthread_sigmask(signal.SIG_SETMASK, self.old_mask)
 
 def main():
     client = KiwiClient(debug=True)
