@@ -264,8 +264,6 @@ class KiwiClient:
             if len(msg_bytes) + 4 > cmd_region['size']:
                 raise ValueError(f"Message too long ({len(msg_bytes)} bytes)")
 
-            self.debug and print(f"Request: {message}")
-            
             # Get cycles immediately before operation
             start_cycles = self.get_cycles()
             
@@ -315,7 +313,7 @@ def main():
     messages = ["Hello, Kiwi!", "Testing 1 2 3", "How are you?"]
 
     for msg in messages:
-        print(f"\nSending: {msg}")
+        print(f"\nRequest: {msg}")
         response = client.send_message(msg)
         if response is None:
             print("No response (timeout)")
@@ -326,7 +324,6 @@ def main():
         # Wait for operation to fully complete
         while DeviceStatus.OPERATION_ACTIVE in client.get_status():
             time.sleep(0.001)
-        time.sleep(0.1)
 
 if __name__ == "__main__":
     main()
